@@ -5,7 +5,7 @@ import torch
 from torch.nn import init
 
 from models.discriminator import DeepConvDiscNet
-from models.pointnet import PointNetCls
+from models.pointnet import PointNetCls, PointNetSeg
 
 def init_net(net, device, init_type, init_gain=1.0):
     """Initialize a network: 1. register CPU/GPU device (with multi-GPU support); 2. initialize the network weights
@@ -65,6 +65,18 @@ def load_models(mode, device, args):
 
     if mode == "cls":
         model = PointNetCls(k=40, feature_transform=True) # False
+        model = model.to(device)
+        try:
+            if args.checkpoint:
+                print('===============================')
+                print("Loading pretrained cls model ...")
+                print('===============================')
+                model.load_state_dict(torch.load(args.checkpoint))
+        except Exception as e:
+            print(e)
+            sys.exit(0)
+    elif mode == "seg":
+        model = PointNetSeg(NUM_SEG_CLASSES=16)
         model = model.to(device)
         try:
             if args.checkpoint:

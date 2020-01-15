@@ -8,9 +8,9 @@ import pickle
 import argparse
 import numpy as np
 
-from dataset.modelNetData import ModelNetDatasetGT, ModelNetDataset_noGT
+from dataset.shapeNetData import ShapeNetDatasetGT, ShapeNetDatasetGT
 from utils.utils import make_logger
-from utils.trainer import run_training, run_training_semi, run_testing
+from utils.trainer import run_training_seg, run_training_semi, run_testing
 from utils.model_utils import load_models
 from utils.image_pool import ImagePool
 
@@ -28,10 +28,10 @@ def parse_arguments():
     parser.add_argument("--pkl_file", type=str,
                         help="pickle file", )
     parser.add_argument("--train_file", type=str,
-                    default="/home/yirus/Datasets/modelnet40_ply_hdf5_2048/train_files.txt",
+                    default="/home/yirus/Datasets/shapeNet/hdf5_data/train_hdf5_file_list.txt",
                       help="data directory of Source dataset",)
     parser.add_argument("--test_file", type=str,
-                    default="/home/yirus/Datasets/modelnet40_ply_hdf5_2048/test_files.txt",
+                    default="/home/yirus/Datasets/shapeNet/hdf5_data/val_hdf5_file_list.txt",
                       help="data directory of Target dataset",)
 
     parser.add_argument("--batch_size",type=int,default=8, help="#data per batch")

@@ -55,6 +55,8 @@ def parse_arguments():
                         help='hyperparams for adv of target')
     parser.add_argument('--lambda_semi', type=float, default=1.0,
                         help='hyperparams for semi target')
+    parser.add_argument('--lambda_regu', type=float, default=0.001,
+                        help='hyperparams for regulization')
     parser.add_argument('--semi_TH', type=float, default=0.8,
                         help='Threshold for semi')
     parser.add_argument('--semi_start_epoch', type=int, default=0,
@@ -136,7 +138,6 @@ def main(args):
         trainset_gt = ModelNetDatasetGT(
             root_list=args.train_file,
             sample_list=sample_gt_list,
-            is_train=True,
         )
         trainset_nogt = ModelNetDataset_noGT(
             root_list=args.train_file,
@@ -164,7 +165,6 @@ def main(args):
         testset = ModelNetDatasetGT(
             root_list=args.test_file,
             sample_list=None,
-            is_train=False,
         )
         testloader = torch.utils.data.DataLoader(
             testset,
@@ -252,7 +252,6 @@ def main(args):
         testset = ModelNetDatasetGT(
             root_list=args.test_file,
             sample_list=None,
-            is_train=False,
         )
         testloader = torch.utils.data.DataLoader(
             testset,

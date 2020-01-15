@@ -20,6 +20,7 @@ sys.path.append("%s/.." % file_path)
 sys.path.append("%s/../.." % file_path)
 
 from utils.utils import make_D_label, adjust_learning_rate
+from models.pointnet import feature_transform_regularizer
 
 INPUT_CHANNELS = 3
 NUM_CLASSES = 4
@@ -63,6 +64,8 @@ def run_testing(
         writer.add_scalar('Loss/test_cls', total_loss / float(args.batch_size*dataloader.__len__()), test_iter)
         writer.add_scalar('Accuracy/test', total_accuracy / float(args.batch_size*dataloader.__len__()), test_iter)
 
+    return total_accuracy / float(args.batch_size*dataloader.__len__()), \
+           total_loss / float(args.batch_size*dataloader.__len__())
 
 
 
@@ -91,6 +94,7 @@ def run_training(
     for i_iter in range(args.total_iterations):
         loss_cls_value = 0
         loss_adv_value = 0
+        loss_regulization = 0
         loss_D_value = 0
 
         model.train()
@@ -129,10 +133,16 @@ def run_training(
         pts, cls = batch
         pts, cls = pts.to(args.device), cls.long().to(args.device)
 
-        pred, global_gt, _, _ = model(pts)
+        pred, global_gt, input_feat, high_feat = model(pts)
         l = cls_loss(pred, cls)
         loss_cls_value += l.item()
         global_softmax = F.log_softmax(global_gt, dim=1)
+        if high_feat is not None:
+            l_regu = feature_transform_regularizer(high_feat)
+            loss_regulization += l_regu.item()
+        else:
+            l_regu = None
+
 
         ## train with target ##
         try:
@@ -144,8 +154,13 @@ def run_training(
         pts_nogt = batch
         pts_nogt = pts_nogt.to(args.device)
 
-        pred_nogt, global_nogt, _, _ = model(pts_nogt)
+        pred_nogt, global_nogt, input_feat, high_feat = model(pts_nogt)
         global_nogt_softmax = F.log_softmax(global_nogt, dim=1)
+        if high_feat is not None:
+            l_regu = feature_transform_regularizer(high_feat)
+            loss_regulization += l_regu.item()
+        else:
+            l_regu = None
 
         D_out = model_D(global_nogt_softmax)
         generated_label = make_D_label(
@@ -158,8 +173,13 @@ def run_training(
         loss_adv = gan_loss(D_out, generated_label)
         loss_adv_value += loss_adv.item()
 
-        loss = args.lambda_cls * l + \
-               args.lambda_adv * loss_adv
+        if l_regu is None:
+            loss = args.lambda_cls * l + \
+                   args.lambda_adv * loss_adv
+        else:
+            loss = args.lambda_cls * l + \
+                   args.lambda_adv * loss_adv + \
+                   args.lambda_regu * l_regu
         loss.backward()
 
         ## train D ##
@@ -202,10 +222,12 @@ def run_training(
         train_logger.info('iter = {0:8d}/{1:8d} '
               'loss_cls = {2:.3f} '
               'loss_adv = {3:.3f} '
+              'loss regu = {4:.3f} '
               'loss_D = {4:.3f}'.format(
                 i_iter, args.total_iterations,
                 loss_cls_value,
                 loss_adv_value,
+                loss_regulization,
                 loss_D_value,
             )
         )
@@ -262,6 +284,7 @@ def run_training_semi(
 
     for i_iter in range(args.total_iterations):
         loss_cls_value = 0
+        loss_regulization = 0
         loss_adv_value = 0
         loss_semi_value = 0
         loss_D_value = 0
@@ -303,10 +326,15 @@ def run_training_semi(
         pts, cls = batch
         pts, cls = pts.to(args.device), cls.long().to(args.device)
 
-        pred, global_gt, _, _ = model(pts)
+        pred, global_gt, input_feat, high_feat = model(pts)
         l_cls = cls_loss(pred, cls)
         loss_cls_value += l_cls.item()
         global_softmax = F.log_softmax(global_gt, dim=1)
+        if high_feat is not None:
+            l_regu = feature_transform_regularizer(high_feat)
+            loss_regulization += l_regu.item()
+        else:
+            l_regu = None
 
         ## train with target ##
         try:
@@ -318,8 +346,13 @@ def run_training_semi(
         pts_nogt = batch
         pts_nogt = pts_nogt.to(args.device)
 
-        pred_nogt, global_nogt, _, _ = model(pts_nogt)
+        pred_nogt, global_nogt, input_feat, high_feat = model(pts_nogt)
         global_nogt_softmax = F.log_softmax(global_nogt, dim=1)
+        if high_feat is not None:
+            l_regu = feature_transform_regularizer(high_feat)
+            loss_regulization += l_regu.item()
+        else:
+            l_regu = None
 
         D_out = model_D(global_nogt_softmax)
         generated_label = make_D_label(
@@ -348,10 +381,15 @@ def run_training_semi(
         else:
             l_semi = None
 
-        if l_semi is not None:
+        if (l_semi is not None) and (l_regu is None):
             loss_CLS_Net = args.lambda_cls * l_cls + \
                            args.lambda_adv * l_adv +\
                            args.lambda_semi * l_semi
+        elif (l_semi is not None) and (l_regu is not None):
+            loss_CLS_Net = args.lambda_cls * l_cls + \
+                           args.lambda_adv * l_adv + \
+                           args.lambda_semi * l_semi + \
+                           args.lambda_regu * l_regu
         else:
             loss_CLS_Net = args.lambda_cls * l_cls + \
                            args.lambda_adv * l_adv
@@ -402,10 +440,12 @@ def run_training_semi(
         train_logger.info('iter = {0:8d}/{1:8d} '
               'loss_cls = {2:.3f} '
               'loss_adv = {3:.3f} '
-              'loss_D = {4:.3f}'.format(
+              'loss_regu = {4:.3f} '
+              'loss_D = {5:.3f}'.format(
                 i_iter, args.total_iterations,
                 loss_cls_value,
                 loss_adv_value,
+                loss_regulization,
                 loss_D_value,
             )
         )

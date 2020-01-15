@@ -68,7 +68,10 @@ class STNkd(nn.Module):
         x = F.relu(self.fc2(x))
         x = self.fc3(x)
 
-        iden = Variable(torch.from_numpy(np.eye(self.k).flatten().astype(np.float32))).view(1,self.k*self.k).repeat(batchsize,1)
+        iden = Variable(
+            torch.from_numpy(
+                np.eye(self.k).flatten().astype(np.float32))
+        ).view(1, self.k*self.k).repeat(batchsize, 1)
         if x.is_cuda:
             iden = iden.cuda()
         x = x + iden
@@ -76,13 +79,14 @@ class STNkd(nn.Module):
         return x
 
 class PointNetfeat(nn.Module):
-    def __init__(self, global_feat = True, feature_transform = False):
+    def __init__(self, global_feat=True, feature_transform=False):
         super(PointNetfeat, self).__init__()
         self.stn = STN3d()
 
         self.conv1 = torch.nn.Conv1d(3, 64, 1)
-        self.conv2 = torch.nn.Conv1d(64, 128, 1)
-        self.conv3 = torch.nn.Conv1d(128, 1024, 1)
+        self.conv2 = torch.nn.Conv1d(64, 64, 1)
+        self.conv3 = torch.nn.Conv1d(64, 128, 1)
+        self.conv4 = torch.nn.Conv1d(128, 1024, 1)
 
         self.global_feat = global_feat
         self.feature_transform = feature_transform
@@ -109,6 +113,7 @@ class PointNetfeat(nn.Module):
         x = torch.bmm(x, trans)
         x = x.transpose(2, 1) # BxCxN
         x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
 
         if self.feature_transform:
             trans_feat = self.fstn(x)
@@ -119,8 +124,8 @@ class PointNetfeat(nn.Module):
             trans_feat = None
 
         pointfeat = x
-        x = F.relu(self.conv2(x))
-        x = self.conv3(x)
+        x = F.relu(self.conv3(x))
+        x = self.conv4(x)
         x = torch.max(x, 2, keepdim=True)[0] # BxCxN -> BxCx1
         x = x.view(-1, 1024)
         if self.global_feat:
@@ -129,6 +134,53 @@ class PointNetfeat(nn.Module):
             x = x.view(-1, 1024, 1).repeat(1, 1, n_pts)
             return torch.cat([x, pointfeat], 1), trans, trans_feat
 
+# class PointNetfeat_SEG(nn.Module):
+#     def __init__(self, global_feat=True, feature_transform=False):
+#         super(PointNetfeat_SEG, self).__init__()
+#         self.stn = STN3d()
+#
+#         self.conv1 = torch.nn.Conv1d(3, 64, 1)
+#         self.conv2 = torch.nn.Conv1d(64, 128, 1)
+#         self.conv3 = torch.nn.Conv1d(128, 128, 1)
+#         self.conv4 = torch.nn.Conv1d(128, 128, 1)
+#         self.conv5 = torch.nn.Conv1d(128, 512, 1)
+#         self.conv6 = torch.nn.Conv1d(512, 2048, 1)
+#
+#         self.global_feat = global_feat
+#         self.feature_transform = feature_transform
+#         if self.feature_transform:
+#             self.fstn = STNkd(k=64)
+#
+#         #self.conv1 = torch.nn.Conv1d(3, 64, 1)
+#         #self.conv2 = torch.nn.Conv1d(64, 128, 1)
+#         #self.conv3 = torch.nn.Conv1d(128, 128, 1)
+#         #self.conv4 = torch.nn.Conv1d(128, 128, 1)
+#         #self.bn1 = nn.BatchNorm1d(64)
+#         #self.bn2 = nn.BatchNorm1d(128)
+#         #self.bn3 = nn.BatchNorm1d(128)
+#         #self.bn4 = nn.BatchNorm1d(128)
+#         #self.global_feat = global_feat
+#         #self.feature_transform = feature_transform
+#         #if self.feature_transform:
+#         #    self.fstn = STNkd(k=64)
+#
+#     def forward(self, x, cls):
+#         n_pts = x.size()[2] # BxCxN
+#         trans = self.stn(x) # BxNxN
+#         x = x.transpose(2, 1) # BxNxC
+#         x = torch.bmm(x, trans)
+#         x = x.transpose(2, 1) # BxCxN
+#         x_1 = F.relu(self.conv1(x)) #Bx64xN
+#         x_2 = F.relu(self.conv2(x_1)) #Bx128xN
+#         x_3 = F.relu(self.conv2(x_2)) #Bx128xN
+#         x_4 = F.relu(self.conv2(x_3)) #Bx128xN
+#         x_5 = F.relu(self.conv2(x_4)) #Bx512xN
+#
+#         x_global = torch.max(x_5, 2, keepdim=True)[0] # BxCxN -> BxCx1
+#         x = x_global.repeat(1, 1, n_pts) # Bx2048XN
+#         x_feat = torch.cat([x_1, x_2, x_3, x_4, x_5, x, cls], 1) #Bx3024xN
+#
+#         return x_feat
 class PointNetCls(nn.Module):
     def __init__(self, k=3, feature_transform=False):
         super(PointNetCls, self).__init__()
@@ -153,61 +205,65 @@ class PointNetSeg(nn.Module):
         super(PointNetSeg, self).__init__()
         self.output_dim = NUM_SEG_CLASSES
 
+        self.stn = STN3d()
+        self.fstn = STNkd(k=128)
+
         self.conv1 = torch.nn.Conv1d(3, 64, 1)
         self.conv2 = torch.nn.Conv1d(64, 128, 1)
         self.conv3 = torch.nn.Conv1d(128, 128, 1)
         self.conv4 = torch.nn.Conv1d(128, 128, 1)
-        self.fc1 = torch.nn.Linear(128, 512)
-        self.fc2 = torch.nn.Linear(512, 2048)
+        self.conv5 = torch.nn.Conv1d(128, 512, 1)
+        self.conv6 = torch.nn.Conv1d(512, 2048, 1)
 
-        # self.bn5 = nn.BatchNorm1d(512)
-        # self.bn6 = nn.BatchNorm1d(2048)
+        self.fc1 = torch.nn.Linear(3024, 256)
+        self.fc2 = torch.nn.Linear(256, 256)
+        self.fc3 = torch.nn.Linear(256, 128)
+        self.fc4 = torch.nn.Linear(128, self.output_dim)
 
-        self.fc3 = torch.nn.Linear(3024, 256)
-        self.fc4 = torch.nn.Linear(256, 256)
-        self.fc5 = torch.nn.Linear(256, 128)
-        self.fc6 = torch.nn.Linear(128, self.output_dim)
-
-        # self.bn7 = nn.BatchNorm1d(256)
-        # self.bn8 = nn.BatchNorm1d(256)
-        # self.bn9 = nn.BatchNorm1d(128)
-
-        self.dropout = nn.Dropout(p=0.5)
+        # self.dropout = nn.Dropout(p=0.5)
 
     def forward(self, x, cls):
-        x = x.transpose(2, 1)  # BxCxN, cls: Bx1xC'
+        # x = x.transpose(2, 1)  # BxCxN, cls: Bx1xC'
         # cls = cls.transpose(2, 1) # BxC'x1
         n_pts = x.size()[2]
+        trans = self.stn(x)  # BxNxN
+        x = x.transpose(2, 1)  # BxNxC
+        x = torch.bmm(x, trans)
+        x = x.transpose(2, 1)  # BxCxN
         x1 = F.relu(self.conv1(x)) # Bx64xN
         x2 = F.relu(self.conv2(x1)) # Bx128xN
         x3 = F.relu(self.conv3(x2)) # Bx128xN
-        x4 = F.relu(self.conv4(x3)) # Bx128xN
-        x4_reshape = x4.transpose(2,1) # BxNx128
-        x5 = F.relu(self.fc1(x4_reshape)) # BxNx512
-        x6 = F.relu(self.fc2(x5)) # BxNx2048
 
-        x_global = torch.max(x6, 1, keepdim=True)[0] #Bx1x2048
-        x_tile = x_global.repeat(1, n_pts, 1) # BxNx2048
-        cls_tile = cls.repeat(1, n_pts, 1) # BxNxC'
-        x1 = x1.transpose(2, 1)
-        x2 = x2.transpose(2, 1)
-        x3 = x3.transpose(2, 1)
-        x4 = x4.transpose(2, 1)
-        x7 = torch.cat((x1, x2, x3, x4, x5, x_tile, cls_tile), 2)
+        trans_feat = self.fstn(x3)
+        x = x.transpose(2, 1)
+        x = torch.bmm(x, trans_feat)
+        x = x.transpose(2, 1)
 
-        x8 = F.relu(self.fc3(x7))
-        x9 = self.dropout(F.relu(self.fc4(x8)))
-        x10 = self.dropout(F.relu(self.fc5(x9)))
-        x_final = self.fc6(x10)
+        x4 = F.relu(self.conv4(x)) #Bx128xN
+        x5 = F.relu(self.conv5(x4)) #Bx512xN
+        x6 = F.relu(self.conv6(x5)) #Bx2048xN
 
-        return x_final
+        x_global = torch.max(x6, 2, keepdim=True)[0] #Bx2048x1
+        x_tile = x_global.repeat(1, 1, n_pts) # Bx2048xN
+        cls_tile = cls.repeat(1, 1, n_pts) # BxC'xN
+        x_all = torch.cat((x1, x2, x3, x4, x5, x_tile, cls_tile), 1) #Bx3024xN
+
+        x = x_all.transpose(1, 2)
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = F.relu(self.fc3(x))
+        # x = self.dropout(F.relu(self.fc2(x)))
+        # x = self.dropout(F.relu(self.fc3(x)))
+        x = self.fc4(x)
+
+        return x
 
 
 class PointNetDenseCls(nn.Module):
     def __init__(self, k = 2, feature_transform=False):
         super(PointNetDenseCls, self).__init__()
         self.k = k
-        self.feature_transform=feature_transform
+        self.feature_transform = feature_transform
         self.feat = PointNetfeat(global_feat=False, feature_transform=feature_transform)
         self.conv1 = torch.nn.Conv1d(1088, 512, 1)
         self.conv2 = torch.nn.Conv1d(512, 256, 1)

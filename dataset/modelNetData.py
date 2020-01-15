@@ -14,7 +14,6 @@ class ModelNetDatasetGT(data.Dataset):
     def __init__(self,
                  root_list,
                  sample_list,
-                 is_train,
                  npoints=1024,
                  data_augmentation=True):
         self.sample_list = sample_list

@@ -94,169 +94,297 @@ def one_hot(label, num_classes):
     one_hot[0, label] = 1
     return one_hot
 
-class ShapeNetGTDataset(data.Dataset):
+class ShapeNetDatasetGT(data.Dataset):
     """
     Only generate seg labels.
     Creating a single dataloader to make it independent with the
     dataloader that outputs both images and seg labels.
     """
     def __init__(self,
+                 sample_list,
+                 root_list,
                  num_classes,
-                 num_pts = 2048):
+                 num_pts=2048,
+        ):
+        self.sample_list = sample_list
         self.num_classes = num_classes
         self.npts = num_pts
+        # self.data_augmentation = data_augmentation
+        self.data_files = self.getDataFiles(root_list)
 
-        hdf5_data_dir = os.path.join(BASE_DIR, './hdf5_data')
-        self.filepath = os.path.join(hdf5_data_dir, "train_hdf5_file_list.txt")
-        self.list =self.getDataFiles(self.filepath, hdf5_data_dir)
-        pts, cls, seg = [], [], []
-        for i in range(len(self.list)):
-            p, c, s = self.load_h5_data_label_seg(self.list[i], self.npts)
-            pts.append(p)
-            cls.append(c)
-            seg.append(s)
+        self.load_data()
 
-        self.pts = [pi for bp in pts for pi in bp]
-        self.cls = [ci for bc in cls for ci in bc]
-        self.seg = [si for bs in seg for si in bs]
+        print("Loading GT data: {} ...".format(self.select_data.shape[0]))
+        # hdf5_data_dir = os.path.join(BASE_DIR, './hdf5_data')
+        # self.filepath = os.path.join(hdf5_data_dir, "train_hdf5_file_list.txt")
+        # self.list =self.getDataFiles(self.filepath, hdf5_data_dir)
+        # pts, cls, seg = [], [], []
+        # for i in range(len(self.list)):
+        #     p, c, s = self.load_h5_data_label_seg(self.list[i], self.npts)
+        #     pts.append(p)
+        #     cls.append(c)
+        #     seg.append(s)
+        #
+        # self.pts = [pi for bp in pts for pi in bp]
+        # self.cls = [ci for bc in cls for ci in bc]
+        # self.seg = [si for bs in seg for si in bs]
+        #
+        # self.pts = np.asarray(self.pts, dtype=np.float32)
+        # self.cls = np.asarray(self.cls, dtype=np.int64)
+        # self.seg = np.asarray(self.seg, dtype=np.int64)
 
-        self.pts = np.asarray(self.pts, dtype=np.float32)
-        self.cls = np.asarray(self.cls, dtype=np.int64)
-        self.seg = np.asarray(self.seg, dtype=np.int64)
+    def load_data(self):
+        total_files = len(self.data_files)
+        total_data = []
+        total_labels = []
+        total_segs = []
+        for idx in range(total_files):
+            p, c, s = self.loadDataFile(self.data_files[idx], npts=self.npts)
+            total_data.append(p)
+            total_labels.append(c)
+            total_segs.append(s)
 
+        all_pts = [pi for bp in total_data for pi in bp]
+        all_labels = [ci for bc in total_labels for ci in bc]
+        all_segs = [si for bs in total_segs for si in bs]
 
-    def getDataFiles(self, list_filename, hdf5_data_dir):
-        return [os.path.join(hdf5_data_dir, line.rstrip()) for line in open(list_filename)]
+        all_pts = np.asarray(all_pts, dtype=np.float32)
+        all_labels = np.asarray(all_labels, dtype=np.int64)
+        all_segs = np.asarray(all_segs, dtype=np.int64)
 
-    def load_h5_data_label_seg(self, h5_filename, npts):
-        f = h5py.File(h5_filename, 'r')
-        data = f['data'][:,0:npts,:]
-        label = f['label'][:]
-        seg = f['pid'][:,0:npts]
-        return data, label, seg
-
-    def __getitem__(self, index):
-        point = self.pts[index]
-        cls = self.cls[index]
-        cls_encoding = one_hot(cls, self.num_classes)
-        seg = self.seg[index]
-
-        point = torch.from_numpy(point)
-        point = point.unsqueeze(0)
-        # cls_encoding = cls_encoding.unsqueeze(0)
-        cls_encoding = np.expand_dims(cls_encoding, axis=0)
-        cls_encoding = torch.from_numpy(cls_encoding.astype(np.int64))
-        seg = torch.from_numpy(seg.astype(np.int64))
-        return point, cls_encoding, seg
-
-    def __len__(self):
-        return self.pts.shape[0]
-
-class ShapeNetDataset(data.Dataset):
-    def __init__(self,
-                 num_classes,
-                 num_pts = 2048,
-                 mode = "train",
-                 aug_noise = False,
-                 aug_rotate = False):
-        self.num_classes = num_classes
-        self.npts = num_pts
-        self.mode = mode
-        self.aug_noise = aug_noise
-        self.aug_rotate = aug_rotate
-
-        hdf5_data_dir = os.path.join(BASE_DIR, './hdf5_data')
-        if self.mode == "train":
-            self.filepath = os.path.join(hdf5_data_dir, "train_hdf5_file_list.txt")
-        elif self.mode == "test":
-            self.filepath = os.path.join(hdf5_data_dir, "test_hdf5_file_list.txt")
+        if isinstance(self.sample_list, np.ndarray):
+            self.select_data = all_pts[self.sample_list,:,:]
+            self.select_labels = all_labels[self.sample_list]
+            self.select_segs = all_segs[self.sample_list,:]
         else:
-            raise ValueError("Invalid mode: {}".format(self.mode))
-
-        self.list =self.getDataFiles(self.filepath, hdf5_data_dir)
-        pts, cls, seg = [], [], []
-        for i in range(len(self.list)):
-            p, c, s = self.load_h5_data_label_seg(self.list[i], self.npts)
-            pts.append(p)
-            cls.append(c)
-            seg.append(s)
-
-        self.pts = [pi for bp in pts for pi in bp]
-        self.cls = [ci for bc in cls for ci in bc]
-        self.seg = [si for bs in seg for si in bs]
-
-        self.pts = np.asarray(self.pts, dtype=np.float32)
-        self.cls = np.asarray(self.cls, dtype=np.int64)
-        self.seg = np.asarray(self.seg, dtype=np.int64)
+            self.select_data = all_pts.copy()
+            self.select_labels = all_labels.copy()
+            self.select_segs = all_segs.copy()
 
 
-    def getDataFiles(self, list_filename, hdf5_data_dir):
-        return [os.path.join(hdf5_data_dir, line.rstrip()) for line in open(list_filename)]
+    def getDataFiles(self, list_filename):
+        return [line.rstrip() for line in open(list_filename)]
+        # return [os.path.join(hdf5_data_dir, line.rstrip()) for line in open(list_filename)]
 
-    def load_h5_data_label_seg(self, h5_filename, npts):
-        f = h5py.File(h5_filename, 'r')
-        data = f['data'][:,0:npts,:]
+    def loadDataFile(self, filename, npts):
+        f = h5py.File(filename, 'r')
+        data = f['data'][:, 0:npts, :]
         label = f['label'][:]
-        seg = f['pid'][:,0:npts]
+        seg = f['pid'][:, 0:npts]
         return data, label, seg
 
-    def rotate_point_cloud(self, data):
-        """ Randomly rotate the point clouds to augument the dataset
-            rotation is per shape based along up direction
-            Input:
-              Nx3 array, original batch of point clouds
-            Return:
-              Nx3 array, rotated batch of point clouds
-        """
-        rotation_angle = np.random.uniform() * 2 * np.pi
-        cosval = np.cos(rotation_angle)
-        sinval = np.sin(rotation_angle)
-        rotation_matrix = np.array([[cosval, 0, sinval],
-                                    [0, 1, 0],
-                                    [-sinval, 0, cosval]])
-        shape_pc = data.copy()
-        rotated_data = np.dot(shape_pc, rotation_matrix)
-        return rotated_data
-
-    def jitter_point_cloud(self, data, sigma=0.01, clip=0.05):
-        """ Randomly jitter points. jittering is per point.
-            Input:
-              Nx3 array, original batch of point clouds
-            Return:
-              Nx3 array, jittered batch of point clouds
-        """
-        N, C = data.shape
-        assert (clip > 0)
-        jittered_data = np.clip(sigma * np.random.randn(N, C), -1 * clip, clip)
-        jittered_data += data
-        return jittered_data
-
     def __getitem__(self, index):
-        point = self.pts[index]
-        cls = self.cls[index]
-        seg = self.seg[index]
-        cls_encoding = one_hot(cls, self.num_classes)
+        pts, cls, seg = self.select_data[index], self.select_labels[index], self.select_segs[index]
+        cls = one_hot(cls, self.num_classes)
+        cls = np.expand_dims(cls, axis=0)
 
-        if self.aug_noise:
-            point = self.jitter_point_cloud(point)
-        if self.aug_rotate:
-            point = self.rotate_point_cloud(point)
-
-        point = torch.from_numpy(point)
+        # point = self.pts[index]
+        # cls = self.cls[index]
+        # cls_encoding = one_hot(cls, self.num_classes)
+        # seg = self.seg[index]
+        #
+        # point = torch.from_numpy(point)
         # point = point.unsqueeze(0)
-        # cls_encoding = cls_encoding.unsqueeze(0) # 1x1xC
+        # # cls_encoding = cls_encoding.unsqueeze(0)
         # cls_encoding = np.expand_dims(cls_encoding, axis=0)
-        cls_encoding = torch.from_numpy(cls_encoding.astype(np.int64))
-        seg = torch.from_numpy(seg.astype(np.int64))
-        return point, cls_encoding, seg
+        # cls_encoding = torch.from_numpy(cls_encoding.astype(np.int64))
+        # seg = torch.from_numpy(seg.astype(np.int64))
+        return pts, cls, seg
 
     def __len__(self):
-        return self.pts.shape[0]
+        return self.select_data.shape[0]
+
+class ShapeNetDatasetGT_noGT(data.Dataset):
+    """
+    Only generate seg labels.
+    Creating a single dataloader to make it independent with the
+    dataloader that outputs both images and seg labels.
+    """
+    def __init__(self,
+                 sample_list,
+                 root_list,
+                 num_classes,
+                 num_pts=2048,
+        ):
+        self.sample_list = sample_list
+        self.num_classes = num_classes
+        self.npts = num_pts
+        # self.data_augmentation = data_augmentation
+        self.data_files = self.getDataFiles(root_list)
+
+        self.load_data()
+
+        print("Loading GT data: {} ...".format(self.select_data.shape[0]))
+
+    def load_data(self):
+        total_files = len(self.data_files)
+        total_data = []
+        total_labels = []
+        total_segs = []
+        for idx in range(total_files):
+            p, c, s = self.loadDataFile(self.data_files[idx], npts=self.npts)
+            total_data.append(p)
+            total_labels.append(c)
+            total_segs.append(s)
+
+        all_pts = [pi for bp in total_data for pi in bp]
+        all_labels = [ci for bc in total_labels for ci in bc]
+        all_segs = [si for bs in total_segs for si in bs]
+
+        all_pts = np.asarray(all_pts, dtype=np.float32)
+        all_labels = np.asarray(all_labels, dtype=np.int64)
+        all_segs = np.asarray(all_segs, dtype=np.int64)
+
+        if isinstance(self.sample_list, np.ndarray):
+            self.select_data = all_pts[self.sample_list,:,:]
+            self.select_labels = all_labels[self.sample_list]
+            self.select_segs = all_segs[self.sample_list,:]
+        else:
+            self.select_data = all_pts.copy()
+            self.select_labels = all_labels.copy()
+            self.select_segs = all_segs.copy()
+
+
+    def getDataFiles(self, list_filename):
+        return [line.rstrip() for line in open(list_filename)]
+        # return [os.path.join(hdf5_data_dir, line.rstrip()) for line in open(list_filename)]
+
+    def loadDataFile(self, filename, npts):
+        f = h5py.File(filename, 'r')
+        data = f['data'][:, 0:npts, :]
+        label = f['label'][:]
+        seg = f['pid'][:, 0:npts]
+        return data, label, seg
+
+    def __getitem__(self, index):
+        pts, cls, seg = self.select_data[index], self.select_labels[index], self.select_segs[index]
+        cls = one_hot(cls, self.num_classes)
+        cls = np.expand_dims(cls, axis=0)
+
+        # point = self.pts[index]
+        # cls = self.cls[index]
+        # cls_encoding = one_hot(cls, self.num_classes)
+        # seg = self.seg[index]
+        #
+        # point = torch.from_numpy(point)
+        # point = point.unsqueeze(0)
+        # # cls_encoding = cls_encoding.unsqueeze(0)
+        # cls_encoding = np.expand_dims(cls_encoding, axis=0)
+        # cls_encoding = torch.from_numpy(cls_encoding.astype(np.int64))
+        # seg = torch.from_numpy(seg.astype(np.int64))
+        return pts, cls, seg
+
+    def __len__(self):
+        return self.select_data.shape[0]
+
+# class ShapeNetDataset(data.Dataset):
+#     def __init__(self,
+#                  num_classes,
+#                  num_pts = 2048,
+#                  mode = "train",
+#                  aug_noise = False,
+#                  aug_rotate = False):
+#         self.num_classes = num_classes
+#         self.npts = num_pts
+#         self.mode = mode
+#         self.aug_noise = aug_noise
+#         self.aug_rotate = aug_rotate
+#
+#         hdf5_data_dir = os.path.join(BASE_DIR, './hdf5_data')
+#         if self.mode == "train":
+#             self.filepath = os.path.join(hdf5_data_dir, "train_hdf5_file_list.txt")
+#         elif self.mode == "test":
+#             self.filepath = os.path.join(hdf5_data_dir, "test_hdf5_file_list.txt")
+#         else:
+#             raise ValueError("Invalid mode: {}".format(self.mode))
+#
+#         self.list =self.getDataFiles(self.filepath, hdf5_data_dir)
+#         pts, cls, seg = [], [], []
+#         for i in range(len(self.list)):
+#             p, c, s = self.load_h5_data_label_seg(self.list[i], self.npts)
+#             pts.append(p)
+#             cls.append(c)
+#             seg.append(s)
+#
+#         self.pts = [pi for bp in pts for pi in bp]
+#         self.cls = [ci for bc in cls for ci in bc]
+#         self.seg = [si for bs in seg for si in bs]
+#
+#         self.pts = np.asarray(self.pts, dtype=np.float32)
+#         self.cls = np.asarray(self.cls, dtype=np.int64)
+#         self.seg = np.asarray(self.seg, dtype=np.int64)
+#
+#
+#     def getDataFiles(self, list_filename, hdf5_data_dir):
+#         return [os.path.join(hdf5_data_dir, line.rstrip()) for line in open(list_filename)]
+#
+#     def load_h5_data_label_seg(self, h5_filename, npts):
+#         f = h5py.File(h5_filename, 'r')
+#         data = f['data'][:,0:npts,:]
+#         label = f['label'][:]
+#         seg = f['pid'][:,0:npts]
+#         return data, label, seg
+#
+#     def rotate_point_cloud(self, data):
+#         """ Randomly rotate the point clouds to augument the dataset
+#             rotation is per shape based along up direction
+#             Input:
+#               Nx3 array, original batch of point clouds
+#             Return:
+#               Nx3 array, rotated batch of point clouds
+#         """
+#         rotation_angle = np.random.uniform() * 2 * np.pi
+#         cosval = np.cos(rotation_angle)
+#         sinval = np.sin(rotation_angle)
+#         rotation_matrix = np.array([[cosval, 0, sinval],
+#                                     [0, 1, 0],
+#                                     [-sinval, 0, cosval]])
+#         shape_pc = data.copy()
+#         rotated_data = np.dot(shape_pc, rotation_matrix)
+#         return rotated_data
+#
+#     def jitter_point_cloud(self, data, sigma=0.01, clip=0.05):
+#         """ Randomly jitter points. jittering is per point.
+#             Input:
+#               Nx3 array, original batch of point clouds
+#             Return:
+#               Nx3 array, jittered batch of point clouds
+#         """
+#         N, C = data.shape
+#         assert (clip > 0)
+#         jittered_data = np.clip(sigma * np.random.randn(N, C), -1 * clip, clip)
+#         jittered_data += data
+#         return jittered_data
+#
+#     def __getitem__(self, index):
+#         point = self.pts[index]
+#         cls = self.cls[index]
+#         seg = self.seg[index]
+#         cls_encoding = one_hot(cls, self.num_classes)
+#
+#         if self.aug_noise:
+#             point = self.jitter_point_cloud(point)
+#         if self.aug_rotate:
+#             point = self.rotate_point_cloud(point)
+#
+#         point = torch.from_numpy(point)
+#         # point = point.unsqueeze(0)
+#         # cls_encoding = cls_encoding.unsqueeze(0) # 1x1xC
+#         # cls_encoding = np.expand_dims(cls_encoding, axis=0)
+#         cls_encoding = torch.from_numpy(cls_encoding.astype(np.int64))
+#         seg = torch.from_numpy(seg.astype(np.int64))
+#         return point, cls_encoding, seg
+#
+#     def __len__(self):
+#         return self.pts.shape[0]
 
 if __name__ == '__main__':
-    shapenet = ShapeNetDataset(mode="train", num_classes=16)
-    print("#train: {}".format(len(shapenet)))
-    trainloader = data.DataLoader(shapenet, batch_size=1)
+    # shapenet = ShapeNetDataset(mode="train", num_classes=16)
+    dataset = ShapeNetGTDataset(sample_list=None,
+                                root_list="/home/yirus/Datasets/shapeNet/hdf5_data/train_hdf5_file_list.txt",
+                                num_classes=16)
+    # print("#train: {}".format(len(shapenet)))
+    trainloader = data.DataLoader(dataset, batch_size=1)
     for i, data in enumerate(trainloader):
         pts, cls, seg = data
         pts, cls, seg = pts.numpy().squeeze(), cls.numpy().squeeze(), seg.numpy().squeeze()
@@ -275,7 +403,9 @@ if __name__ == '__main__':
     # print("class: {}, type: {}".format(cls.size(), cls.type()))
     # print("seg: {}, type: {}".format(seg.size(), seg.type()))
 
-    shapenet = ShapeNetDataset(mode="test", num_classes=16)
+    shapenet = ShapeNetGTDataset(sample_list=None,
+                                 root_list="/home/yirus/Datasets/shapeNet/hdf5_data/val_hdf5_file_list.txt",
+                                 num_classes=16)
     print("#test: {}".format(len(shapenet)))
 
 
