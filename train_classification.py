@@ -42,6 +42,7 @@ def parse_arguments():
     parser.add_argument('--init_disc', type=str, default="xavier",
                         help='initialization of disc')
 
+    parser.add_argument("--input_pts", type=int, default=1024, help="#pts per object")
     parser.add_argument("--num_epochs", type=int, default=200, help="#epochs")
     parser.add_argument("--num_samples", type=int, default=10, help="#data w/ GT")
     parser.add_argument("--save_per_epoch", type=int, default=2, help="#epochs to save .pth")
@@ -178,10 +179,14 @@ def main(args):
         args.total_data = trainset_gt.__len__() + trainset_nogt.__len__()
         args.total_iterations = int(args.num_epochs *
                                     args.total_data / args.batch_size)
-        args.iter_save_epoch = args.save_per_epoch * args.iter_per_epoch
-        args.iter_test_epoch = args.test_epoch * args.iter_per_epoch
+        # args.iter_save_epoch = args.save_per_epoch * args.iter_per_epoch
+        # args.iter_test_epoch = args.test_epoch * args.iter_per_epoch
+        # args.semi_start = int(args.semi_start_epoch *
+        #                                trainset_gt.__len__() / args.batch_size)
+        args.iter_save_epoch = args.save_per_epoch * int(args.total_data / args.batch_size)
+        args.iter_test_epoch = args.test_epoch * int(args.total_data / args.batch_size)
         args.semi_start = int(args.semi_start_epoch *
-                               trainset_gt.__len__() / args.batch_size)
+                              args.total_data / args.batch_size)
 
     if (args.train or args.run_semi) and args.test:
         model.train()

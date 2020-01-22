@@ -225,6 +225,7 @@ class PointNetSeg(nn.Module):
     def forward(self, x, cls):
         # x = x.transpose(2, 1)  # BxCxN, cls: Bx1xC'
         # cls = cls.transpose(2, 1) # BxC'x1
+        x = x.transpose(1, 2)  # BxNxC -> BxCxN
         n_pts = x.size()[2]
         trans = self.stn(x)  # BxNxN
         x = x.transpose(2, 1)  # BxNxC
@@ -235,8 +236,7 @@ class PointNetSeg(nn.Module):
         x3 = F.relu(self.conv3(x2)) # Bx128xN
 
         trans_feat = self.fstn(x3)
-        x = x.transpose(2, 1)
-        x = torch.bmm(x, trans_feat)
+        x = torch.bmm(x3.transpose(2, 1), trans_feat)
         x = x.transpose(2, 1)
 
         x4 = F.relu(self.conv4(x)) #Bx128xN
@@ -245,30 +245,31 @@ class PointNetSeg(nn.Module):
 
         x_global = torch.max(x6, 2, keepdim=True)[0] #Bx2048x1
         x_tile = x_global.repeat(1, 1, n_pts) # Bx2048xN
-        cls_tile = cls.repeat(1, 1, n_pts) # BxC'xN
+        cls_tile = cls.transpose(2, 1).repeat(1, 1, n_pts) # BxC'xN
         x_all = torch.cat((x1, x2, x3, x4, x5, x_tile, cls_tile), 1) #Bx3024xN
 
-        x = x_all.transpose(1, 2)
+        x = x_all.transpose(1, 2) # BxNxC
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         x = F.relu(self.fc3(x))
         # x = self.dropout(F.relu(self.fc2(x)))
         # x = self.dropout(F.relu(self.fc3(x)))
         x = self.fc4(x)
+        x = x.transpose(1,2) # BxCxN
 
-        return x
+        return x, x_global, trans, trans_feat
 
 
 class PointNetDenseCls(nn.Module):
-    def __init__(self, k = 2, feature_transform=False):
+    def __init__(self, num_classes=16, feature_transform=False):
         super(PointNetDenseCls, self).__init__()
-        self.k = k
+        self.num_classes = num_classes
         self.feature_transform = feature_transform
         self.feat = PointNetfeat(global_feat=False, feature_transform=feature_transform)
         self.conv1 = torch.nn.Conv1d(1088, 512, 1)
         self.conv2 = torch.nn.Conv1d(512, 256, 1)
         self.conv3 = torch.nn.Conv1d(256, 128, 1)
-        self.conv4 = torch.nn.Conv1d(128, self.k, 1)
+        self.conv4 = torch.nn.Conv1d(128, self.num_classes, 1)
 
 
     def forward(self, x):

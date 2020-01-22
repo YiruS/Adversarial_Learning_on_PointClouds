@@ -90,7 +90,7 @@ def pts2img(pts, clr):
     return im
 
 def one_hot(label, num_classes):
-    one_hot = np.zeros((1, num_classes), dtype = label.dtype)
+    one_hot = np.zeros((1, num_classes), dtype=np.float32)
     one_hot[0, label] = 1
     return one_hot
 
@@ -176,7 +176,7 @@ class ShapeNetDatasetGT(data.Dataset):
     def __getitem__(self, index):
         pts, cls, seg = self.select_data[index], self.select_labels[index], self.select_segs[index]
         cls = one_hot(cls, self.num_classes)
-        cls = np.expand_dims(cls, axis=0)
+        # cls = np.expand_dims(cls, axis=0)
 
         # point = self.pts[index]
         # cls = self.cls[index]
@@ -194,7 +194,7 @@ class ShapeNetDatasetGT(data.Dataset):
     def __len__(self):
         return self.select_data.shape[0]
 
-class ShapeNetDatasetGT_noGT(data.Dataset):
+class ShapeNetDataset_noGT(data.Dataset):
     """
     Only generate seg labels.
     Creating a single dataloader to make it independent with the
@@ -220,29 +220,29 @@ class ShapeNetDatasetGT_noGT(data.Dataset):
         total_files = len(self.data_files)
         total_data = []
         total_labels = []
-        total_segs = []
+        # total_segs = []
         for idx in range(total_files):
-            p, c, s = self.loadDataFile(self.data_files[idx], npts=self.npts)
+            p, c= self.loadDataFile(self.data_files[idx], npts=self.npts)
             total_data.append(p)
             total_labels.append(c)
-            total_segs.append(s)
+            # total_segs.append(s)
 
         all_pts = [pi for bp in total_data for pi in bp]
         all_labels = [ci for bc in total_labels for ci in bc]
-        all_segs = [si for bs in total_segs for si in bs]
+        # all_segs = [si for bs in total_segs for si in bs]
 
         all_pts = np.asarray(all_pts, dtype=np.float32)
         all_labels = np.asarray(all_labels, dtype=np.int64)
-        all_segs = np.asarray(all_segs, dtype=np.int64)
+        # all_segs = np.asarray(all_segs, dtype=np.int64)
 
         if isinstance(self.sample_list, np.ndarray):
             self.select_data = all_pts[self.sample_list,:,:]
             self.select_labels = all_labels[self.sample_list]
-            self.select_segs = all_segs[self.sample_list,:]
+            # self.select_segs = all_segs[self.sample_list,:]
         else:
             self.select_data = all_pts.copy()
             self.select_labels = all_labels.copy()
-            self.select_segs = all_segs.copy()
+            # self.select_segs = all_segs.copy()
 
 
     def getDataFiles(self, list_filename):
@@ -253,13 +253,13 @@ class ShapeNetDatasetGT_noGT(data.Dataset):
         f = h5py.File(filename, 'r')
         data = f['data'][:, 0:npts, :]
         label = f['label'][:]
-        seg = f['pid'][:, 0:npts]
-        return data, label, seg
+        # seg = f['pid'][:, 0:npts]
+        return data, label
 
     def __getitem__(self, index):
-        pts, cls, seg = self.select_data[index], self.select_labels[index], self.select_segs[index]
+        pts, cls = self.select_data[index], self.select_labels[index] #, self.select_segs[index]
         cls = one_hot(cls, self.num_classes)
-        cls = np.expand_dims(cls, axis=0)
+        # cls = np.expand_dims(cls, axis=0)
 
         # point = self.pts[index]
         # cls = self.cls[index]
@@ -272,7 +272,7 @@ class ShapeNetDatasetGT_noGT(data.Dataset):
         # cls_encoding = np.expand_dims(cls_encoding, axis=0)
         # cls_encoding = torch.from_numpy(cls_encoding.astype(np.int64))
         # seg = torch.from_numpy(seg.astype(np.int64))
-        return pts, cls, seg
+        return pts, cls
 
     def __len__(self):
         return self.select_data.shape[0]
@@ -380,7 +380,7 @@ class ShapeNetDatasetGT_noGT(data.Dataset):
 
 if __name__ == '__main__':
     # shapenet = ShapeNetDataset(mode="train", num_classes=16)
-    dataset = ShapeNetGTDataset(sample_list=None,
+    dataset = ShapeNetDatasetGT(sample_list=None,
                                 root_list="/home/yirus/Datasets/shapeNet/hdf5_data/train_hdf5_file_list.txt",
                                 num_classes=16)
     # print("#train: {}".format(len(shapenet)))

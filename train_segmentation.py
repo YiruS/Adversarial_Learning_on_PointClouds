@@ -8,9 +8,9 @@ import pickle
 import argparse
 import numpy as np
 
-from dataset.shapeNetData import ShapeNetDatasetGT, ShapeNetDatasetGT
+from dataset.shapeNetData import ShapeNetDatasetGT, ShapeNetDataset_noGT
 from utils.utils import make_logger
-from utils.trainer import run_training_seg, run_training_semi, run_testing
+from utils.trainer import run_training_seg, run_training_semi, run_testing_seg
 from utils.model_utils import load_models
 from utils.image_pool import ImagePool
 
@@ -18,15 +18,13 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 import torch.optim as optim
 
-RES_DIR = "/home/yirus/Projects/AdvSemiSeg/3D/results"
+RES_DIR = "/home/yirus/Projects/AdvSemiSeg/3D/results/segmentation"
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Transfer Learning for Eye Segmentation")
     parser.add_argument('name', type=str,
                         help="Name of the model for storing and loading purposes.")
 
-    parser.add_argument("--pkl_file", type=str,
-                        help="pickle file", )
     parser.add_argument("--train_file", type=str,
                     default="/home/yirus/Datasets/shapeNet/hdf5_data/train_hdf5_file_list.txt",
                       help="data directory of Source dataset",)
@@ -42,6 +40,7 @@ def parse_arguments():
     parser.add_argument('--init_disc', type=str, default="xavier",
                         help='initialization of disc')
 
+    parser.add_argument("--input_pts", type=int, default=2048, help="#pts per object")
     parser.add_argument("--num_epochs", type=int, default=200, help="#epochs")
     parser.add_argument("--num_samples", type=int, default=10, help="#data w/ GT")
     parser.add_argument("--save_per_epoch", type=int, default=2, help="#epochs to save .pth")
@@ -55,6 +54,8 @@ def parse_arguments():
                         help='hyperparams for adv of target')
     parser.add_argument('--lambda_semi', type=float, default=1.0,
                         help='hyperparams for semi target')
+    parser.add_argument('--lambda_regu', type=float, default=0.001,
+                        help='hyperparams for regulization')
     parser.add_argument('--semi_TH', type=float, default=0.8,
                         help='Threshold for semi')
     parser.add_argument('--semi_start_epoch', type=int, default=0,
@@ -93,7 +94,7 @@ def main(args):
     test_logger = make_logger("Test.log", args)
 
     model = load_models(
-        mode="cls",
+        mode="seg",
         device=device,
         args=args,
     )
@@ -122,25 +123,26 @@ def main(args):
     else:
         writer = None
 
-    if (args.train or args.run_semi) and args.test:
+    if args.train and args.test:
         print("===================================")
         print("====== Loading Training Data ======")
         print("===================================")
-        idx = np.arange(9840)
+        idx = np.arange(14007)
         np.random.shuffle(idx)
         sample_gt_list = idx[0:args.num_samples]
         sample_nogt_list = idx[args.num_samples:]
         filename = "gt_sample_{}.npy".format(args.name)
-        np.save(filename, sample_gt_list)
+        np.save(os.path.join(args.exp_dir, filename), sample_gt_list)
 
-        trainset_gt = ModelNetDatasetGT(
+        trainset_gt = ShapeNetDatasetGT(
             root_list=args.train_file,
             sample_list=sample_gt_list,
-            is_train=True,
+            num_classes=16,
         )
-        trainset_nogt = ModelNetDataset_noGT(
+        trainset_nogt = ShapeNetDataset_noGT(
             root_list=args.train_file,
             sample_list=sample_nogt_list,
+            num_classes=16,
         )
 
         trainloader_gt = torch.utils.data.DataLoader(
@@ -161,10 +163,10 @@ def main(args):
         print("===================================")
         print("====== Loading Test Data ======")
         print("===================================")
-        testset = ModelNetDatasetGT(
+        testset = ShapeNetDatasetGT(
             root_list=args.test_file,
             sample_list=None,
-            is_train=False,
+            num_classes=16,
         )
         testloader = torch.utils.data.DataLoader(
             testset,
@@ -178,12 +180,12 @@ def main(args):
         args.total_data = trainset_gt.__len__() + trainset_nogt.__len__()
         args.total_iterations = int(args.num_epochs *
                                     args.total_data / args.batch_size)
-        args.iter_save_epoch = args.save_per_epoch * args.iter_per_epoch
-        args.iter_test_epoch = args.test_epoch * args.iter_per_epoch
+        args.iter_save_epoch = args.save_per_epoch * int(args.total_data / args.batch_size)
+        args.iter_test_epoch = args.test_epoch * int(args.total_data / args.batch_size)
         args.semi_start = int(args.semi_start_epoch *
-                               trainset_gt.__len__() / args.batch_size)
+                               args.total_data / args.batch_size)
 
-    if (args.train or args.run_semi) and args.test:
+    if args.train and args.test:
         model.train()
         model_D.train()
 
@@ -192,7 +194,7 @@ def main(args):
 
         #class_weight = 1.0 / trainset_gt.get_class_probability().to(device)
 
-        cls_loss = torch.nn.CrossEntropyLoss().to(device)
+        seg_loss = torch.nn.CrossEntropyLoss().to(device)
         gan_loss = torch.nn.BCEWithLogitsLoss().to(device)
         semi_loss = torch.nn.CrossEntropyLoss(ignore_index=255)
 
@@ -203,17 +205,18 @@ def main(args):
         targetloader_nogt_iter = enumerate(trainloader_nogt)
 
 
-        if args.train:
-            run_training(
+        if args.train and (args.semi_start_epoch==0):
+            run_training_seg(
                 trainloader_gt=trainloader_gt,
                 trainloader_nogt=trainloader_nogt,
                 trainloader_gt_iter=trainloader_gt_iter,
                 targetloader_nogt_iter=targetloader_nogt_iter,
                 testloader=testloader,
+                testdataset=testset,
                 model=model,
                 model_D=model_D,
                 gan_loss=gan_loss,
-                cls_loss=cls_loss,
+                seg_loss=seg_loss,
                 optimizer=optimizer,
                 optimizer_D=optimizer_D,
                 history_pool_gt=history_pool_gt,
@@ -223,36 +226,36 @@ def main(args):
                 test_logger=test_logger,
                 args=args,
             )
-        elif args.run_semi:
-            run_training_semi(
-                trainloader_gt=trainloader_gt,
-                trainloader_nogt=trainloader_nogt,
-                trainloader_gt_iter=trainloader_gt_iter,
-                targetloader_nogt_iter=targetloader_nogt_iter,
-                testloader=testloader,
-                model=model,
-                model_D=model_D,
-                gan_loss=gan_loss,
-                cls_loss=cls_loss,
-                semi_loss=semi_loss,
-                optimizer=optimizer,
-                optimizer_D=optimizer_D,
-                history_pool_gt=history_pool_gt,
-                history_pool_nogt=history_pool_nogt,
-                writer=writer,
-                train_logger=train_logger,
-                test_logger=test_logger,
-                args=args,
-            )
+        # elif args.train and (args.semi_start_epoch>0):
+        #     run_training_semi(
+        #         trainloader_gt=trainloader_gt,
+        #         trainloader_nogt=trainloader_nogt,
+        #         trainloader_gt_iter=trainloader_gt_iter,
+        #         targetloader_nogt_iter=targetloader_nogt_iter,
+        #         testloader=testloader,
+        #         model=model,
+        #         model_D=model_D,
+        #         gan_loss=gan_loss,
+        #         seg_loss=seg_loss,
+        #         semi_loss=semi_loss,
+        #         optimizer=optimizer,
+        #         optimizer_D=optimizer_D,
+        #         history_pool_gt=history_pool_gt,
+        #         history_pool_nogt=history_pool_nogt,
+        #         writer=writer,
+        #         train_logger=train_logger,
+        #         test_logger=test_logger,
+        #         args=args,
+        #     )
 
     if args.test:
         print("===================================")
         print("====== Loading Testing Data =======")
         print("===================================")
-        testset = ModelNetDatasetGT(
+        testset = ShapeNetDatasetGT(
             root_list=args.test_file,
             sample_list=None,
-            is_train=False,
+            num_classes=16,
         )
         testloader = torch.utils.data.DataLoader(
             testset,
@@ -263,7 +266,8 @@ def main(args):
         )
         criterion = torch.nn.CrossEntropyLoss().to(device)
 
-        run_testing(
+        run_testing_seg(
+            dataset=testset,
             dataloader=testloader,
             model=model,
             criterion=criterion,

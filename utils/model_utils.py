@@ -76,7 +76,7 @@ def load_models(mode, device, args):
             print(e)
             sys.exit(0)
     elif mode == "seg":
-        model = PointNetSeg(NUM_SEG_CLASSES=16)
+        model = PointNetSeg(NUM_SEG_CLASSES=50)
         model = model.to(device)
         try:
             if args.checkpoint:
@@ -88,7 +88,7 @@ def load_models(mode, device, args):
             print(e)
             sys.exit(0)
     elif mode == "disc":
-        model = DeepConvDiscNet(input_dim=1024, output_dim=1)
+        model = DeepConvDiscNet(input_dim=args.input_pts, output_dim=1)
         model = init_net(model, device, init_type=args.init_disc)
         #if args.checkpoint_disc:
         #    print('===============================')
