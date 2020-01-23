@@ -43,6 +43,7 @@ def parse_arguments():
                         help='initialization of disc')
 
     parser.add_argument("--input_pts", type=int, default=1024, help="#pts per object")
+    parser.add_argument("--disc_indim", type=int, default=40, help="#channeles to disc")
     parser.add_argument("--num_epochs", type=int, default=200, help="#epochs")
     parser.add_argument("--num_samples", type=int, default=10, help="#data w/ GT")
     parser.add_argument("--save_per_epoch", type=int, default=2, help="#epochs to save .pth")

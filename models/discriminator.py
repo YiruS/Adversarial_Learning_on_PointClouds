@@ -40,6 +40,7 @@ class DeepConvDiscNet(nn.Module):
 
 
     def forward(self, x):
+        x = x.unsqueeze(2)  # BxCx1
         x = self.leaky_relu(self.conv1(x))
         x = self.leaky_relu(self.conv2(x))
         x = self.leaky_relu(self.conv3(x))
@@ -49,48 +50,37 @@ class DeepConvDiscNet(nn.Module):
         x = self.fc(x) # (BxNx1)
         return x
 
-# class PointNetDiscriminator(nn.Module):
-#     def __init__(self, input_dim, output_dim):
-#         super(PointNetDiscriminator, self).__init__()
-#         self.conv1 = torch.nn.Conv1d(input_dim, 64, 1) # 64
-#         self.conv2 = torch.nn.Conv1d(64, 64, 1) # 64
-#         self.conv3 = torch.nn.Conv1d(64, 128, 1) # 128
-#         self.conv4 = torch.nn.Conv1d(128, 128, 1)  # 128
-#         self.conv5 = torch.nn.Conv1d(128, 1024, 1)  # 1024
-#
-#         # self.bn1 = nn.BatchNorm1d(64)
-#         # self.bn2 = nn.BatchNorm1d(64)
-#         # self.bn3 = nn.BatchNorm1d(128)
-#         # self.bn4 = nn.BatchNorm1d(128)
-#         # self.bn5 = nn.BatchNorm1d(1024)
-#
-#         self.fc1 = torch.nn.Linear(1024, 512) # 128
-#         self.fc2 = torch.nn.Linear(512, 256) # 1024
-#         self.fc3 = torch.nn.Linear(256, 64) # 64
-#         self.fc4 = torch.nn.Linear(64, 64) # 64
-#         self.fc5 = torch.nn.Linear(64, output_dim)
-#
-#         # self.bn6 = nn.BatchNorm1d(512)
-#         # self.bn7 = nn.BatchNorm1d(256)
-#         # self.bn8 = nn.BatchNorm1d(64)
-#         # self.bn9 = nn.BatchNorm1d(64)
-#
-#         # self.dropout = nn.Dropout(p=0.5)
-#
-#     def forward(self, x):
-#         x = x.transpose(2,1) # BxCxN
-#         x = F.relu(self.conv1(x))
-#         x = F.relu(self.conv2(x))
-#         x = F.relu(self.conv3(x))
-#         x = F.relu(self.conv4(x))
-#
-#         x = x.transpose(2,1) # BxNxC
-#         x = torch.max(x, 2, keepdim=True)[0]
-#         x = x.view(-1, 1024)
-#         # x = self.fc1(x)
-#         # x = self.fc2(x)
-#         # x = self.dropout(self.fc3(x))
-#         # x = self.dropout(self.fc4(x))
-#         # x = self.fc5(x)
-#
-#         return x
+class PointwiseDiscNet(nn.Module):
+    def __init__(self, input_pts, input_dim, output_dim):
+        super(PointwiseDiscNet, self).__init__()
+        self.input_pts = input_pts
+
+        self.conv1 = torch.nn.Conv1d(input_dim, 64, 1) # 64
+        self.conv2 = torch.nn.Conv1d(64, 64, 1) # 64
+        self.conv3 = torch.nn.Conv1d(64, 64, 1) # 128
+        self.conv4 = torch.nn.Conv1d(64, 128, 1)  # 128
+        self.conv5 = torch.nn.Conv1d(128, 1024, 1)  # 1024
+
+        self.fc1 = torch.nn.Linear(1024, 512) # 128
+        self.fc2 = torch.nn.Linear(512, 256) # 1024
+        self.fc3 = torch.nn.Linear(256, 64) # 64
+        self.fc4 = torch.nn.Linear(64, 64) # 64
+        self.fc5 = torch.nn.Linear(64, output_dim)
+
+    def forward(self, x):
+        # x = x.transpose(2, 1) # BxCxN
+        x = F.relu(self.conv1(x)) # Bx50xN
+        x = F.relu(self.conv2(x)) # Bx64xN
+        x = F.relu(self.conv3(x))
+        x = F.relu(self.conv4(x))
+
+        x = x.transpose(2,1) # BxNxC
+        x = torch.max(x, 2, keepdim=True)[0]  # BxNx1
+        x = x.view(-1, self.input_pts)
+        # x = self.fc1(x)
+        # x = self.fc2(x)
+        # x = self.dropout(self.fc3(x))
+        # x = self.dropout(self.fc4(x))
+        # x = self.fc5(x)
+
+        return x

@@ -4,7 +4,7 @@ import sys
 import torch
 from torch.nn import init
 
-from models.discriminator import DeepConvDiscNet
+from models.discriminator import DeepConvDiscNet, PointwiseDiscNet
 from models.pointnet import PointNetCls, PointNetSeg
 
 def init_net(net, device, init_type, init_gain=1.0):
@@ -88,13 +88,16 @@ def load_models(mode, device, args):
             print(e)
             sys.exit(0)
     elif mode == "disc":
-        model = DeepConvDiscNet(input_dim=args.input_pts, output_dim=1)
+        model = DeepConvDiscNet(input_dim=args.disc_indim, output_dim=1)  # input_dim=args.input_pts, output_dim=1)
         model = init_net(model, device, init_type=args.init_disc)
         #if args.checkpoint_disc:
         #    print('===============================')
         #    print("Loading pretrained discriminator model ...")
         #    print('===============================')
         #    model.load_state_dict(torch.load(args.checkpoint_disc))
+        # model = init_net(model, device, init_type=args.init_disc)
+    elif mode == "disc_seg":
+        model = PointwiseDiscNet(input_pts=args.input_pts,input_dim=args.disc_indim, output_dim=1)
         model = init_net(model, device, init_type=args.init_disc)
     else:
         raise ValueError("Invalid mode {}!".format(mode))
