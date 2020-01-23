@@ -2,6 +2,7 @@
 # Copyright 2004-present Facebook. All Rights Reserved.
 
 import os
+import random
 import sys
 import pickle
 
@@ -10,7 +11,7 @@ import numpy as np
 
 from dataset.shapeNetData import ShapeNetDatasetGT, ShapeNetDataset_noGT
 from utils.utils import make_logger
-from utils.trainer import run_training_seg, run_training_semi, run_testing_seg
+from utils.trainer import run_training_seg, run_training_seg_semi, run_testing_seg
 from utils.model_utils import load_models
 from utils.image_pool import ImagePool
 
@@ -29,7 +30,7 @@ def parse_arguments():
                     default="/home/yirus/Datasets/shapeNet/hdf5_data/train_hdf5_file_list.txt",
                       help="data directory of Source dataset",)
     parser.add_argument("--test_file", type=str,
-                    default="/home/yirus/Datasets/shapeNet/hdf5_data/val_hdf5_file_list.txt",
+                    default="/home/yirus/Datasets/shapeNet/hdf5_data/test_hdf5_file_list.txt",
                       help="data directory of Target dataset",)
 
     parser.add_argument("--batch_size",type=int,default=8, help="#data per batch")
@@ -41,6 +42,7 @@ def parse_arguments():
                         help='initialization of disc')
 
     parser.add_argument("--input_pts", type=int, default=2048, help="#pts per object")
+    parser.add_argument("--disc_indim", type=int, default=50, help="#channeles to disc")
     parser.add_argument("--num_epochs", type=int, default=200, help="#epochs")
     parser.add_argument("--num_samples", type=int, default=10, help="#data w/ GT")
     parser.add_argument("--save_per_epoch", type=int, default=2, help="#epochs to save .pth")
@@ -99,7 +101,7 @@ def main(args):
         args=args,
     )
     model_D = load_models(
-        mode="disc",
+        mode="disc_seg",
         device=device,
         args=args,
     )
@@ -127,6 +129,9 @@ def main(args):
         print("===================================")
         print("====== Loading Training Data ======")
         print("===================================")
+
+        random.seed(9001)
+
         idx = np.arange(14007)
         np.random.shuffle(idx)
         sample_gt_list = idx[0:args.num_samples]
@@ -226,27 +231,28 @@ def main(args):
                 test_logger=test_logger,
                 args=args,
             )
-        # elif args.train and (args.semi_start_epoch>0):
-        #     run_training_semi(
-        #         trainloader_gt=trainloader_gt,
-        #         trainloader_nogt=trainloader_nogt,
-        #         trainloader_gt_iter=trainloader_gt_iter,
-        #         targetloader_nogt_iter=targetloader_nogt_iter,
-        #         testloader=testloader,
-        #         model=model,
-        #         model_D=model_D,
-        #         gan_loss=gan_loss,
-        #         seg_loss=seg_loss,
-        #         semi_loss=semi_loss,
-        #         optimizer=optimizer,
-        #         optimizer_D=optimizer_D,
-        #         history_pool_gt=history_pool_gt,
-        #         history_pool_nogt=history_pool_nogt,
-        #         writer=writer,
-        #         train_logger=train_logger,
-        #         test_logger=test_logger,
-        #         args=args,
-        #     )
+        elif args.train and (args.semi_start_epoch>0):
+            run_training_seg_semi(
+                trainloader_gt=trainloader_gt,
+                trainloader_nogt=trainloader_nogt,
+                trainloader_gt_iter=trainloader_gt_iter,
+                targetloader_nogt_iter=targetloader_nogt_iter,
+                testloader=testloader,
+                testdataset=testset,
+                model=model,
+                model_D=model_D,
+                gan_loss=gan_loss,
+                seg_loss=seg_loss,
+                semi_loss=semi_loss,
+                optimizer=optimizer,
+                optimizer_D=optimizer_D,
+                history_pool_gt=history_pool_gt,
+                history_pool_nogt=history_pool_nogt,
+                writer=writer,
+                train_logger=train_logger,
+                test_logger=test_logger,
+                args=args,
+            )
 
     if args.test:
         print("===================================")
