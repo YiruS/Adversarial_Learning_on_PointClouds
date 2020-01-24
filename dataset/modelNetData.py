@@ -1,4 +1,5 @@
 import io
+import os
 import random
 
 import numpy as np
@@ -215,12 +216,19 @@ def pts2img(pts, clr):
     return im
 
 if __name__ == '__main__':
-    dataset = ModelNetDataset(root_list="/home/yirus/Datasets/modelnet40_ply_hdf5_2048/train_files.txt")
+    dataset = ModelNetDatasetGT(
+        root_list="/home/yirus/Datasets/modelnet40_ply_hdf5_2048/train_files.txt",
+        sample_list=None,
+    )
     print("#train: {}".format(len(dataset)))
     dataloader = data.DataLoader(dataset, batch_size=1)
-    # for i, data in enumerate(dataloader):
-    #     pts, cls = data
-    #     pts, cls = pts.cpu().numpy().squeeze(), cls.cpu().numpy().squeeze()
+    for i, data in enumerate(dataloader):
+        pts, cls = data
+        pts, cls = pts.cpu().numpy().squeeze(), cls.cpu().numpy().squeeze()
+        if cls == 0:
+            im = pts2img(pts, int(cls))
+            title = "pts_{}.png".format(i)
+            im.save(os.path.join("/home/yirus/Datasets/modelnet40_ply_hdf5_2048", title))
     #     if i<10:
     #         im = pts2img(pts, int(cls))
     #         title = "pts_{}.png".format(i)
@@ -230,5 +238,45 @@ if __name__ == '__main__':
     # print("class: {}, type: {}".format(cls.size(), cls.type()))
     # print("seg: {}, type: {}".format(seg.size(), seg.type()))
 
-    shapenet = ModelNetDataset(root_list="/home/yirus/Datasets/modelnet40_ply_hdf5_2048/test_files.txt")
-    print("#test: {}".format(len(shapenet)))
+
+shape = {}
+shape["bathtub"] = []
+shape["bed"] = []
+shape["chair"] = []
+shape["desk"] = []
+shape["dresser"] = []
+shape["monitor"] = []
+shape["nightstand"] = []
+shape["sofa"] = []
+shape["table"] = []
+shape["toilet"] = []
+shape["airplane"] = []
+shape["bench"] = []
+shape["bookshelf"] = []
+shape["bottle"] = []
+shape["bowl"] = []
+shape["car"] = []
+shape["cone"] = []
+shape["cup"] = []
+shape["curtain"] = []
+shape["door"] = []
+shape["flowerpot"] = []
+shape["glassbox"] = []
+shape["guitar"] = []
+shape["keyboard"] = []
+shape["lamp"] = []
+shape["laptop"] = []
+shape["mantel"] = []
+shape["person"] = []
+shape["piano"] = []
+shape["plant"] = []
+shape["radio"] = []
+shape["rangehood"] = []
+shape["sink"] = []
+shape["stairs"] = []
+shape["stool"] = []
+shape["tent"] = []
+shape["tvstand"] = []
+shape["vase"] = []
+shape["wardrobe"] = []
+shape["xbox"] = []
