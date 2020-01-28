@@ -105,7 +105,7 @@ def pts2img(pts, clr):
 #     print("{} => {}".format(object_names[i], len(shape_list[i])))
 # print("#total: {}".format(tot))
 
-sample_ratio = 0.25
+sample_ratio = 0.125
 
 sample_index = []
 sample_class_num = np.empty(40, dtype=np.int)

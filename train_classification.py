@@ -18,15 +18,15 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 import torch.optim as optim
 
-RES_DIR = "/home/yirus/Projects/AdvSemiSeg/3D/results"
+RES_DIR = "/home/yirus/Projects/Adversarial_Learning_on_PointClouds"
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Transfer Learning for Eye Segmentation")
     parser.add_argument('name', type=str,
                         help="Name of the model for storing and loading purposes.")
 
-    parser.add_argument("--pkl_file", type=str,
-                        help="pickle file", )
+    parser.add_argument("--gt_sample_list", type=str,
+                        help="GT sample file", )
     parser.add_argument("--train_file", type=str,
                     default="/home/yirus/Datasets/modelnet40_ply_hdf5_2048/train_files.txt",
                       help="data directory of Source dataset",)
@@ -130,12 +130,14 @@ def main(args):
         print("===================================")
         print("====== Loading Training Data ======")
         print("===================================")
-        idx = np.arange(9840)
-        np.random.shuffle(idx)
-        sample_gt_list = idx[0:args.num_samples]
-        sample_nogt_list = idx[args.num_samples:]
-        filename = "gt_sample_{}.npy".format(args.name)
-        np.save(filename, sample_gt_list)
+        # idx = np.arange(9840)
+        # np.random.shuffle(idx)
+        # sample_gt_list = idx[0:args.num_samples]
+        # sample_nogt_list = idx[args.num_samples:]
+        # filename = "gt_sample_{}.npy".format(args.name)
+        # np.save(filename, sample_gt_list)
+
+        sample_gt_list = np.load(args.gt_sample_list)
 
         trainset_gt = ModelNetDatasetGT(
             root_list=args.train_file,
@@ -143,7 +145,7 @@ def main(args):
         )
         trainset_nogt = ModelNetDataset_noGT(
             root_list=args.train_file,
-            sample_list=sample_nogt_list,
+            sample_list=sample_gt_list,
         )
 
         trainloader_gt = torch.utils.data.DataLoader(

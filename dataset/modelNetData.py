@@ -18,6 +18,13 @@ class ModelNetDatasetGT(data.Dataset):
                  npoints=1024,
                  data_augmentation=True):
         self.sample_list = sample_list
+
+        try:
+            if isinstance(self.sample_list, np.ndarray):
+                print("GT sample list {}......".format(len(self.sample_list)))
+        except NameError:
+            print("No GT sample list!")
+
         self.npoints = npoints
         self.data_augmentation = data_augmentation
         self.data_files = self.getDataFiles(root_list)
@@ -109,6 +116,13 @@ class ModelNetDataset_noGT(data.Dataset):
                  npoints=1024,
                  data_augmentation=True):
         self.sample_list = sample_list
+
+        try:
+            if isinstance(self.sample_list, np.ndarray):
+                print("GT sample list {}......".format(len(self.sample_list)))
+        except NameError:
+            print("No GT sample list!")
+
         self.npoints = npoints
         self.data_augmentation = data_augmentation
         self.data_files = self.getDataFiles(root_list)
@@ -135,7 +149,14 @@ class ModelNetDataset_noGT(data.Dataset):
         total_data = np.concatenate(total_data, axis=0)
         total_data = total_data.astype(np.float32)
 
-        self.select_data = total_data[self.sample_list,:,:]
+        gt_sample_list = self.sample_list
+        all_sample_list = np.arange(total_data.shape[0])
+        nogt_sample_list = np.setdiff1d(all_sample_list, gt_sample_list)
+
+        assert (len(np.setdiff1d(nogt_sample_list, gt_sample_list)) == len(nogt_sample_list)), "Intersection!"
+        assert (len(np.setdiff1d(gt_sample_list, nogt_sample_list)) == len(gt_sample_list)), "Intersection!"
+
+        self.select_data = total_data[nogt_sample_list,:,:]
         #print(self.total_data.shape, self.total_labels.shape)
         #print(np.min(self.total_data[:, 0]), np.min(self.total_data[:, 1]), np.min(self.total_data[:, 2]))
         #ßprint(np.max(self.total_data[:, 0]), np.max(self.total_data[:, 1]), np.max(self.total_data[:, 2]))
