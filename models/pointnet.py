@@ -81,7 +81,7 @@ class STNkd(nn.Module):
 class PointNetfeat(nn.Module):
     def __init__(self, global_feat=True, feature_transform=False):
         super(PointNetfeat, self).__init__()
-        self.stn = STN3d()
+        # self.stn = STN3d()
 
         self.conv1 = torch.nn.Conv1d(3, 64, 1)
         self.conv2 = torch.nn.Conv1d(64, 64, 1)
@@ -108,10 +108,10 @@ class PointNetfeat(nn.Module):
 
     def forward(self, x):
         n_pts = x.size()[2] # BxCxN
-        trans = self.stn(x) # BxNxN
-        x = x.transpose(2, 1) # BxNxC
-        x = torch.bmm(x, trans)
-        x = x.transpose(2, 1) # BxCxN
+        # trans = self.stn(x) # BxNxN
+        # x = x.transpose(2, 1) # BxNxC
+        # x = torch.bmm(x, trans)
+        # x = x.transpose(2, 1) # BxCxN
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
 
@@ -129,10 +129,12 @@ class PointNetfeat(nn.Module):
         x = torch.max(x, 2, keepdim=True)[0] # BxCxN -> BxCx1
         x = x.view(-1, 1024)
         if self.global_feat:
-            return x, trans, trans_feat
+            return x, trans_feat
+            # return x, trans, trans_feat
         else:
             x = x.view(-1, 1024, 1).repeat(1, 1, n_pts)
-            return torch.cat([x, pointfeat], 1), trans, trans_feat
+            return torch.cat([x, pointfeat], 1), trans_feat
+            # return torch.cat([x, pointfeat], 1), trans, trans_feat
 
 # class PointNetfeat_SEG(nn.Module):
 #     def __init__(self, global_feat=True, feature_transform=False):
@@ -194,11 +196,11 @@ class PointNetCls(nn.Module):
 
     def forward(self, x):
         x = x.transpose(1,2) # BxNxC -> BxCxN
-        x_global, trans, trans_feat = self.feat(x)
+        x_global, trans_feat = self.feat(x)
         x = F.relu(self.fc1(x_global))
         x = F.relu(self.dropout(self.fc2(x)))
         x = self.fc3(x)
-        return x, x_global.unsqueeze(2), trans, trans_feat
+        return x, x_global.unsqueeze(2), trans_feat
 
 class PointNetSeg(nn.Module):
     def __init__(self, NUM_SEG_CLASSES):

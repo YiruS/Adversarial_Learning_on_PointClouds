@@ -46,7 +46,7 @@ def run_testing(
         pts, cls = pts.to(args.device), cls.to(args.device)
 
         with torch.set_grad_enabled(False):
-            pred, _, _, _ = model(pts)
+            pred, _, _ = model(pts)
             loss = criterion(pred, cls)
 
         cls = cls.detach().cpu().numpy()
@@ -111,6 +111,94 @@ def run_testing_seg(
            total_loss / float(len(dataset))
 
 
+def run_training_pointnet(
+    trainloader_gt,
+    trainloader_gt_iter,
+    testloader,
+    model,
+    cls_loss,
+    optimizer,
+    train_logger,
+    test_logger,
+    writer,
+    args,
+):
+    max_test_accu = float("-inf")
+
+    for i_iter in range(args.total_iterations):
+        loss_cls_value = 0
+        loss_regulization = 0
+
+        model.train()
+        optimizer.zero_grad()
+
+
+        ## train with points w/ GT ##
+        try:
+            _, batch = next(trainloader_gt_iter)
+        except StopIteration:
+            trainloader_gt_iter = enumerate(trainloader_gt)
+            _, batch = next(trainloader_gt_iter)
+
+        pts, cls = batch
+        pts, cls = pts.to(args.device), cls.long().to(args.device)
+
+        pred, global_gt, high_feat = model(pts)
+        l = cls_loss(pred, cls)
+        loss_cls_value += l.item()
+        if high_feat is not None:
+            l_regu = feature_transform_regularizer(high_feat)
+            loss_regulization += l_regu.item()
+        else:
+            l_regu = None
+
+        if l_regu is None:
+            loss = args.lambda_cls * l
+        else:
+            loss = args.lambda_cls * l + \
+                   args.lambda_regu * l_regu
+        loss.backward()
+        optimizer.step()
+
+        train_logger.info('iter = {0:8d}/{1:8d} '
+              'loss_cls = {2:.3f} '
+              'loss regu = {3:.3f} '.format(
+                i_iter, args.total_iterations,
+                loss_cls_value,
+                loss_regulization,
+            )
+        )
+
+        if args.tensorboard:
+            writer.add_scalar('Loss/train_cls', loss_cls_value, i_iter)
+
+        if i_iter % args.iter_save_epoch == 0:
+            curr_epoch = i_iter // trainloader_gt.__len__()
+            torch.save(model.state_dict(), os.path.join(args.exp_dir,
+                                                       "model_train_epoch_{}.pth").format(curr_epoch))
+
+        if i_iter % args.iter_test_epoch == 0:
+            curr_accu, curr_loss = run_testing(
+                dataloader=testloader,
+                model=model,
+                criterion=cls_loss,
+                logger=test_logger,
+                test_iter=i_iter,
+                writer=writer,
+                args=args,
+            )
+            if max_test_accu < curr_accu:
+                max_test_accu = curr_accu
+                max_train_epoch = i_iter // args.iter_test_epoch
+                torch.save(model.state_dict(), os.path.join(args.exp_dir,
+                                                            "model_train_best.pth"))
+
+    if args.tensorboard:
+        writer.close()
+
+    train_logger.info("Max test accuracy: {:.4f}".format(max_test_accu))
+    train_logger.info("Train model is at epoch: {}".format(max_train_epoch))
+
 def run_training(
     trainloader_gt,
     trainloader_nogt,
@@ -132,6 +220,7 @@ def run_training(
 ):
     gt_label = 1
     nogt_label = 0
+    max_test_accu = float("-inf")
 
     for i_iter in range(args.total_iterations):
         loss_cls_value = 0
@@ -175,16 +264,16 @@ def run_training(
         pts, cls = batch
         pts, cls = pts.to(args.device), cls.long().to(args.device)
 
-        pred, global_gt, input_feat, high_feat = model(pts)
+        pred, global_gt, high_feat = model(pts)
         l = cls_loss(pred, cls)
         loss_cls_value += l.item()
         # global_softmax = F.log_softmax(global_gt, dim=1)
         pred_gt_softmax = F.log_softmax(pred, dim=1)
-        if high_feat is not None:
-            l_regu = feature_transform_regularizer(high_feat)
-            loss_regulization += l_regu.item()
-        else:
-            l_regu = None
+        # if high_feat is not None:
+        #     l_regu = feature_transform_regularizer(high_feat)
+        #     loss_regulization += l_regu.item()
+        # else:
+        #     l_regu = None
 
 
         ## train with target ##
@@ -197,14 +286,14 @@ def run_training(
         pts_nogt = batch
         pts_nogt = pts_nogt.to(args.device)
 
-        pred_nogt, global_nogt, input_feat, high_feat = model(pts_nogt)
+        pred_nogt, global_nogt, high_feat = model(pts_nogt)
         # global_nogt_softmax = F.log_softmax(global_nogt, dim=1)
         pred_nogt_softmax = F.log_softmax(pred_nogt, dim=1)
-        if high_feat is not None:
-            l_regu = feature_transform_regularizer(high_feat)
-            loss_regulization += l_regu.item()
-        else:
-            l_regu = None
+        # if high_feat is not None:
+        #     l_regu = feature_transform_regularizer(high_feat)
+        #     loss_regulization += l_regu.item()
+        # else:
+        #     l_regu = None
 
         D_out = model_D(pred_nogt_softmax)  #global_nogt_softmax
         generated_label = make_D_label(
@@ -217,13 +306,16 @@ def run_training(
         loss_adv = gan_loss(D_out, generated_label)
         loss_adv_value += loss_adv.item()
 
-        if l_regu is None:
-            loss = args.lambda_cls * l + \
-                   args.lambda_adv * loss_adv
-        else:
-            loss = args.lambda_cls * l + \
-                   args.lambda_adv * loss_adv + \
-                   args.lambda_regu * l_regu
+        loss = args.lambda_cls * l + \
+               args.lambda_adv * loss_adv
+
+        # if l_regu is None:
+        #     loss = args.lambda_cls * l + \
+        #            args.lambda_adv * loss_adv
+        # else:
+        #     loss = args.lambda_cls * l + \
+        #            args.lambda_adv * loss_adv + \
+        #            args.lambda_regu * l_regu
         loss.backward()
 
         ## train D ##
@@ -268,12 +360,12 @@ def run_training(
         train_logger.info('iter = {0:8d}/{1:8d} '
               'loss_cls = {2:.3f} '
               'loss_adv = {3:.3f} '
-              'loss regu = {4:.3f} '
-              'loss_D = {5:.3f}'.format(
+              # 'loss regu = {4:.3f} '
+              'loss_D = {4:.3f}'.format(
                 i_iter, args.total_iterations,
                 loss_cls_value,
                 loss_adv_value,
-                loss_regulization,
+                # loss_regulization,
                 loss_D_value,
             )
         )
@@ -284,14 +376,14 @@ def run_training(
             writer.add_scalar('Loss/train_disc', loss_D_value, i_iter)
 
         if i_iter % args.iter_save_epoch == 0:
-            curr_epoch = int(round(i_iter / trainloader_gt.__len__()))
+            curr_epoch = i_iter // args.iter_save_epoch
             torch.save(model.state_dict(),os.path.join(args.exp_dir,
                                                        "model_train_epoch_{}.pth").format(curr_epoch))
             torch.save(model_D.state_dict(),os.path.join(args.exp_dir,
                                                          "modelD_train_epoch_{}.pth").format(curr_epoch))
 
         if i_iter % args.iter_test_epoch == 0:
-            run_testing(
+            curr_accu, curr_loss = run_testing(
                 dataloader=testloader,
                 model=model,
                 criterion=cls_loss,
@@ -300,9 +392,19 @@ def run_training(
                 writer=writer,
                 args=args,
             )
+            if max_test_accu < curr_accu:
+                max_test_accu = curr_accu
+                max_train_epoch = i_iter // args.iter_test_epoch
+                torch.save(model.state_dict(), os.path.join(args.exp_dir,
+                                                            "model_train_best.pth"))
+                torch.save(model_D.state_dict(), os.path.join(args.exp_dir,
+                                                              "modelD_train_best.pth"))
 
     if args.tensorboard:
         writer.close()
+
+    train_logger.info("Max test accuracy: {:.4f}".format(max_test_accu))
+    train_logger.info("Train model is at epoch: {}".format(max_train_epoch))
 
 
 def run_training_semi(
@@ -327,6 +429,7 @@ def run_training_semi(
 ):
     gt_label = 1
     nogt_label = 0
+    max_test_accu = float("-inf")
 
     for i_iter in range(args.total_iterations):
         loss_cls_value = 0
@@ -341,22 +444,22 @@ def run_training_semi(
         optimizer.zero_grad()
         optimizer_D.zero_grad()
 
-        if args.adjust_lr:
-            adjust_learning_rate(
-                optimizer=optimizer,
-                learning_rate=args.lr,
-                i_iter=i_iter,
-                max_steps=args.total_iterations,
-                power=0.9,
-            )
-
-            adjust_learning_rate(
-                optimizer=optimizer_D,
-                learning_rate=args.lr_D,
-                i_iter=i_iter,
-                max_steps=args.total_iterations,
-                power=0.9,
-            )
+        # if args.adjust_lr:
+        #     adjust_learning_rate(
+        #         optimizer=optimizer,
+        #         learning_rate=args.lr,
+        #         i_iter=i_iter,
+        #         max_steps=args.total_iterations,
+        #         power=0.9,
+        #     )
+        #
+        #     adjust_learning_rate(
+        #         optimizer=optimizer_D,
+        #         learning_rate=args.lr_D,
+        #         i_iter=i_iter,
+        #         max_steps=args.total_iterations,
+        #         power=0.9,
+        #     )
 
         ## train G ##
         for param in model_D.parameters():
@@ -372,16 +475,16 @@ def run_training_semi(
         pts, cls = batch
         pts, cls = pts.to(args.device), cls.long().to(args.device)
 
-        pred, global_gt, input_feat, high_feat = model(pts)
+        pred, global_gt, high_feat = model(pts)
         l_cls = cls_loss(pred, cls)
         loss_cls_value += l_cls.item()
         # global_softmax = F.log_softmax(global_gt, dim=1)
         pred_gt_softmax = F.log_softmax(pred, dim=1)
-        if high_feat is not None:
-            l_regu = feature_transform_regularizer(high_feat)
-            loss_regulization += l_regu.item()
-        else:
-            l_regu = None
+        # if high_feat is not None:
+        #     l_regu = feature_transform_regularizer(high_feat)
+        #     loss_regulization += l_regu.item()
+        # else:
+        #     l_regu = None
 
         ## train with target ##
         try:
@@ -393,14 +496,14 @@ def run_training_semi(
         pts_nogt = batch
         pts_nogt = pts_nogt.to(args.device)
 
-        pred_nogt, global_nogt, input_feat, high_feat = model(pts_nogt)
+        pred_nogt, global_nogt, high_feat = model(pts_nogt)
         # global_nogt_softmax = F.log_softmax(global_nogt, dim=1)
         pred_nogt_softmax = F.log_softmax(pred_nogt, dim=1)
-        if high_feat is not None:
-            l_regu = feature_transform_regularizer(high_feat)
-            loss_regulization += l_regu.item()
-        else:
-            l_regu = None
+        # if high_feat is not None:
+        #     l_regu = feature_transform_regularizer(high_feat)
+        #     loss_regulization += l_regu.item()
+        # else:
+        #     l_regu = None
 
         D_out = model_D(pred_nogt_softmax)
         generated_label = make_D_label(
@@ -429,15 +532,23 @@ def run_training_semi(
         else:
             l_semi = None
 
-        if (l_semi is not None) and (l_regu is None):
-            loss_CLS_Net = args.lambda_cls * l_cls + \
-                           args.lambda_adv * l_adv +\
-                           args.lambda_semi * l_semi
-        elif (l_semi is not None) and (l_regu is not None):
+        # if (l_semi is not None) and (l_regu is None):
+        #     loss_CLS_Net = args.lambda_cls * l_cls + \
+        #                    args.lambda_adv * l_adv +\
+        #                    args.lambda_semi * l_semi
+        # elif (l_semi is not None) and (l_regu is not None):
+        #     loss_CLS_Net = args.lambda_cls * l_cls + \
+        #                    args.lambda_adv * l_adv + \
+        #                    args.lambda_semi * l_semi + \
+        #                    args.lambda_regu * l_regu
+        # else:
+        #     loss_CLS_Net = args.lambda_cls * l_cls + \
+        #                    args.lambda_adv * l_adv
+
+        if l_semi is not None:
             loss_CLS_Net = args.lambda_cls * l_cls + \
                            args.lambda_adv * l_adv + \
-                           args.lambda_semi * l_semi + \
-                           args.lambda_regu * l_regu
+                           args.lambda_semi * l_semi
         else:
             loss_CLS_Net = args.lambda_cls * l_cls + \
                            args.lambda_adv * l_adv
@@ -488,12 +599,12 @@ def run_training_semi(
         train_logger.info('iter = {0:8d}/{1:8d} '
               'loss_cls = {2:.3f} '
               'loss_adv = {3:.3f} '
-              'loss_regu = {4:.3f} '
-              'loss_D = {5:.3f}'.format(
+              # 'loss_regu = {4:.3f} '
+              'loss_D = {4:.3f}'.format(
                 i_iter, args.total_iterations,
                 loss_cls_value,
                 loss_adv_value,
-                loss_regulization,
+                # loss_regulization,
                 loss_D_value,
             )
         )
@@ -511,7 +622,7 @@ def run_training_semi(
                                                          "modelD_train_epoch_{}.pth").format(curr_epoch))
 
         if i_iter % args.iter_test_epoch == 0:
-            run_testing(
+            curr_accu, curr_loss = run_testing(
                 dataloader=testloader,
                 model=model,
                 criterion=cls_loss,
@@ -520,9 +631,19 @@ def run_training_semi(
                 writer=writer,
                 args=args,
             )
+            if max_test_accu < curr_accu:
+                max_test_accu = curr_accu
+                max_train_epoch = i_iter // args.iter_test_epoch
+                torch.save(model.state_dict(), os.path.join(args.exp_dir,
+                                                            "model_train_best.pth"))
+                torch.save(model_D.state_dict(), os.path.join(args.exp_dir,
+                                                              "modelD_train_best.pth"))
 
     if args.tensorboard:
         writer.close()
+
+    train_logger.info("Max test accuracy: {:.4f}".format(max_test_accu))
+    train_logger.info("Train model is at epoch: {}".format(max_train_epoch))
 
 def run_training_seg(
     trainloader_gt,

@@ -3,22 +3,24 @@
 
 import os
 import sys
-import pickle
 
 import argparse
 import numpy as np
 
-from dataset.modelNetData import ModelNetDatasetGT, ModelNetDataset_noGT
+file_path = os.path.dirname(os.path.realpath(__file__))
+sys.path.append("%s/.." % file_path)
+
+from dataset.modelNetData import ModelNetDatasetGT
 from utils.utils import make_logger
-from utils.trainer import run_training, run_training_semi, run_testing
+from utils.trainer import run_training_pointnet, run_testing
 from utils.model_utils import load_models
-from utils.image_pool import ImagePool
+
 
 import torch
 from torch.utils.tensorboard import SummaryWriter
 import torch.optim as optim
 
-RES_DIR = "/home/yirus/Projects/Adversarial_Learning_on_PointClouds/results/classification"
+RES_DIR = "/home/yirus/Projects/Adversarial_Learning_on_PointClouds/pointnet"
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Transfer Learning for Eye Segmentation")
@@ -34,35 +36,20 @@ def parse_arguments():
                     default="/home/yirus/Datasets/modelnet40_ply_hdf5_2048/test_files.txt",
                       help="data directory of Target dataset",)
 
-    parser.add_argument("--batch_size",type=int,default=16, help="#data per batch")
-    parser.add_argument("--lr",type=float, default=0.0001, help="lr for SS")
-    parser.add_argument("--lr_D",type=float, default=0.0001, help="lr for D")
-    parser.add_argument("--workers",type=int, default=0, help="#workers for dataloader")
-    parser.add_argument("--loss",type=str, default="ce", help="Type of loss")
-    parser.add_argument('--init_disc', type=str, default="xavier",
-                        help='initialization of disc')
+    parser.add_argument("--batch_size", type=int,default=16, help="#data per batch")
+    parser.add_argument("--lr", type=float, default=0.0001, help="lr for SS")
+    parser.add_argument("--workers", type=int, default=0, help="#workers for dataloader")
+    parser.add_argument("--loss", type=str, default="ce", help="Type of loss")
 
     parser.add_argument("--input_pts", type=int, default=1024, help="#pts per object")
-    parser.add_argument("--disc_indim", type=int, default=40, help="#channeles to disc")
     parser.add_argument("--num_epochs", type=int, default=200, help="#epochs")
-    parser.add_argument("--num_samples", type=int, default=10, help="#data w/ GT")
     parser.add_argument("--save_per_epoch", type=int, default=2, help="#epochs to save .pth")
     parser.add_argument("--test_epoch", type=int, default=2, help="#epochs to test")
 
-    parser.add_argument('--pool_size', type=int, default=0,
-                        help='buffer size for discriminator')
     parser.add_argument('--lambda_cls', type=float, default=1.0,
                         help='hyperparams for seg source')
-    parser.add_argument('--lambda_adv', type=float, default=0.001,
-                        help='hyperparams for adv of target')
-    parser.add_argument('--lambda_semi', type=float, default=1.0,
-                        help='hyperparams for semi target')
     parser.add_argument('--lambda_regu', type=float, default=0.001,
                         help='hyperparams for regulization')
-    parser.add_argument('--semi_TH', type=float, default=0.8,
-                        help='Threshold for semi')
-    parser.add_argument('--semi_start_epoch', type=int, default=0,
-                        help='Start epoch for semi')
 
     parser.add_argument('--checkpoint', type=str, default=None,
                         help='Pretrained model (.pth)')
@@ -70,8 +57,6 @@ def parse_arguments():
                         help = 'run training')
     parser.add_argument('--test', action='store_true', default=False,
                         help='run testing')
-    # parser.add_argument('--run_semi', action='store_true', default=False,
-    #                     help='run semi training')
     parser.add_argument('--tensorboard', action='store_true', default=False,
                         help='visulization with tensorboard')
     parser.add_argument('--adjust_lr', action='store_true', default=False,
@@ -101,11 +86,6 @@ def main(args):
         device=device,
         args=args,
     )
-    model_D = load_models(
-        mode="disc",
-        device=device,
-        args=args,
-    )
 
     optimizer = optim.Adam(
         model.parameters(),
@@ -113,13 +93,6 @@ def main(args):
         betas=(0.9, 0.999),
     )
     optimizer.zero_grad()
-
-    optimizer_D = optim.Adam(
-        model_D.parameters(),
-        lr=args.lr_D,
-        betas=(0.9, 0.999),
-    )
-    optimizer_D.zero_grad()
 
     if args.tensorboard:
         writer = SummaryWriter(args.exp_dir)
@@ -130,12 +103,6 @@ def main(args):
         print("===================================")
         print("====== Loading Training Data ======")
         print("===================================")
-        # idx = np.arange(9840)
-        # np.random.shuffle(idx)
-        # sample_gt_list = idx[0:args.num_samples]
-        # sample_nogt_list = idx[args.num_samples:]
-        # filename = "gt_sample_{}.npy".format(args.name)
-        # np.save(filename, sample_gt_list)
 
         sample_gt_list = np.load(args.gt_sample_list)
 
@@ -143,20 +110,9 @@ def main(args):
             root_list=args.train_file,
             sample_list=sample_gt_list,
         )
-        trainset_nogt = ModelNetDataset_noGT(
-            root_list=args.train_file,
-            sample_list=sample_gt_list,
-        )
 
         trainloader_gt = torch.utils.data.DataLoader(
             trainset_gt,
-            batch_size=args.batch_size,
-            shuffle=True,
-            num_workers=args.workers,
-            pin_memory=True,
-        )
-        trainloader_nogt = torch.utils.data.DataLoader(
-            trainset_nogt,
             batch_size=args.batch_size,
             shuffle=True,
             num_workers=args.workers,
@@ -178,76 +134,32 @@ def main(args):
             pin_memory=True,
         )
 
-        args.iter_per_epoch = int(1.0 * trainset_gt.__len__() / args.batch_size)
-        args.total_data = trainset_gt.__len__() + trainset_nogt.__len__()
-        args.total_iterations = int(args.num_epochs *
-                                    args.total_data / args.batch_size)
+        args.iter_per_epoch = int(trainset_gt.__len__() / args.batch_size)
+        args.total_data = trainset_gt.__len__()
+        args.total_iterations = int(args.num_epochs * args.total_data / args.batch_size)
         args.iter_save_epoch = args.save_per_epoch * int(args.total_data / args.batch_size)
         args.iter_test_epoch = args.test_epoch * int(args.total_data / args.batch_size)
-        args.semi_start = int(args.semi_start_epoch *
-                              args.total_data / args.batch_size)
 
     if args.train and args.test:
         model.train()
-        model_D.train()
-
         model.to(args.device)
-        model_D.to(args.device)
-
-        #class_weight = 1.0 / trainset_gt.get_class_probability().to(device)
 
         cls_loss = torch.nn.CrossEntropyLoss().to(device)
-        gan_loss = torch.nn.BCEWithLogitsLoss().to(device)
-        semi_loss = torch.nn.CrossEntropyLoss(ignore_index=255)
-
-        history_pool_gt = ImagePool(args.pool_size)
-        history_pool_nogt = ImagePool(args.pool_size)
 
         trainloader_gt_iter = enumerate(trainloader_gt)
-        targetloader_nogt_iter = enumerate(trainloader_nogt)
 
-
-        if args.semi_start_epoch==0:
-            run_training(
-                trainloader_gt=trainloader_gt,
-                trainloader_nogt=trainloader_nogt,
-                trainloader_gt_iter=trainloader_gt_iter,
-                targetloader_nogt_iter=targetloader_nogt_iter,
-                testloader=testloader,
-                model=model,
-                model_D=model_D,
-                gan_loss=gan_loss,
-                cls_loss=cls_loss,
-                optimizer=optimizer,
-                optimizer_D=optimizer_D,
-                history_pool_gt=history_pool_gt,
-                history_pool_nogt=history_pool_nogt,
-                writer=writer,
-                train_logger=train_logger,
-                test_logger=test_logger,
-                args=args,
-            )
-        else:
-            run_training_semi(
-                trainloader_gt=trainloader_gt,
-                trainloader_nogt=trainloader_nogt,
-                trainloader_gt_iter=trainloader_gt_iter,
-                targetloader_nogt_iter=targetloader_nogt_iter,
-                testloader=testloader,
-                model=model,
-                model_D=model_D,
-                gan_loss=gan_loss,
-                cls_loss=cls_loss,
-                semi_loss=semi_loss,
-                optimizer=optimizer,
-                optimizer_D=optimizer_D,
-                history_pool_gt=history_pool_gt,
-                history_pool_nogt=history_pool_nogt,
-                writer=writer,
-                train_logger=train_logger,
-                test_logger=test_logger,
-                args=args,
-            )
+        run_training_pointnet(
+            trainloader_gt=trainloader_gt,
+            trainloader_gt_iter=trainloader_gt_iter,
+            testloader=testloader,
+            model=model,
+            cls_loss=cls_loss,
+            optimizer=optimizer,
+            writer=writer,
+            train_logger=train_logger,
+            test_logger=test_logger,
+            args=args,
+        )
 
     if args.test:
         print("===================================")

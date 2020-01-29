@@ -64,7 +64,7 @@ def load_models(mode, device, args):
     """
 
     if mode == "cls":
-        model = PointNetCls(k=40, feature_transform=True) # False
+        model = PointNetCls(k=40, feature_transform=False) # False
         model = model.to(device)
         try:
             if args.checkpoint:
