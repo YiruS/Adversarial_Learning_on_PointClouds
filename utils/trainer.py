@@ -88,7 +88,7 @@ def run_testing_seg(
         pts, cls, seg = pts.to(args.device), cls.to(args.device), seg.long().to(args.device)
 
         with torch.set_grad_enabled(False):
-            pred, _, _, _ = model(pts, cls)
+            pred, _ = model(pts, cls)
             loss = criterion(pred, seg)
 
         pred_seg = pred.max(1)[1]
@@ -111,7 +111,7 @@ def run_testing_seg(
            total_loss / float(len(dataset))
 
 
-def run_training_pointnet(
+def run_training_pointnet_cls(
     trainloader_gt,
     trainloader_gt_iter,
     testloader,
@@ -198,6 +198,84 @@ def run_training_pointnet(
 
     train_logger.info("Max test accuracy: {:.4f}".format(max_test_accu))
     train_logger.info("Train model is at epoch: {}".format(max_train_epoch))
+
+def run_training_pointnet_seg(
+    trainloader_gt,
+    trainloader_gt_iter,
+    testloader,
+    testdataset,
+    model,
+    seg_loss,
+    optimizer,
+    train_logger,
+    test_logger,
+    writer,
+    args,
+):
+    max_test_accu = float("-inf")
+
+    for i_iter in range(args.total_iterations):
+        loss_seg_value = 0
+
+        model.train()
+        optimizer.zero_grad()
+
+        ## train with points w/ GT ##
+        try:
+            _, batch = next(trainloader_gt_iter)
+        except StopIteration:
+            trainloader_gt_iter = enumerate(trainloader_gt)
+            _, batch = next(trainloader_gt_iter)
+
+        pts, cls, seg = batch
+        pts, cls, seg = pts.to(args.device), cls.to(args.device), seg.long().to(args.device)
+
+        pred, global_gt = model(pts, cls)
+        l = seg_loss(pred, seg)
+        loss_seg_value += l.item()
+
+        loss = args.lambda_seg * l
+        loss.backward()
+        optimizer.step()
+
+        train_logger.info('iter = {0:8d}/{1:8d} '
+              'loss_seg = {2:.3f} '.format(
+                i_iter, args.total_iterations,
+                loss_seg_value,
+            )
+        )
+
+        if args.tensorboard:
+            writer.add_scalar('Loss/train_seg', loss_seg_value, i_iter)
+
+        if i_iter % args.iter_save_epoch == 0:
+            curr_epoch = i_iter // trainloader_gt.__len__()
+            torch.save(model.state_dict(), os.path.join(args.exp_dir,
+                                                       "model_train_epoch_{}.pth").format(curr_epoch))
+
+        if i_iter % args.iter_test_epoch == 0:
+            curr_accu, curr_loss = run_testing_seg(
+                dataset=testdataset,
+                dataloader=testloader,
+                model=model,
+                criterion=seg_loss,
+                logger=test_logger,
+                test_iter=i_iter,
+                writer=writer,
+                args=args,
+            )
+            if max_test_accu < curr_accu:
+                max_test_accu = curr_accu
+                max_train_epoch = i_iter // args.iter_test_epoch
+                torch.save(model.state_dict(), os.path.join(args.exp_dir,
+                                                            "model_train_best.pth"))
+
+    if args.tensorboard:
+        writer.close()
+
+    train_logger.info("Max test accuracy: {:.4f}".format(max_test_accu))
+    train_logger.info("Train model is at epoch: {}".format(max_train_epoch))
+
 
 def run_training(
     trainloader_gt,

@@ -229,19 +229,19 @@ class PointNetSeg(nn.Module):
         # cls = cls.transpose(2, 1) # BxC'x1
         x = x.transpose(1, 2)  # BxNxC -> BxCxN
         n_pts = x.size()[2]
-        trans = self.stn(x)  # BxNxN
-        x = x.transpose(2, 1)  # BxNxC
-        x = torch.bmm(x, trans)
-        x = x.transpose(2, 1)  # BxCxN
+        # trans = self.stn(x)  # BxNxN
+        # x = x.transpose(2, 1)  # BxNxC
+        # x = torch.bmm(x, trans)
+        # x = x.transpose(2, 1)  # BxCxN
         x1 = F.relu(self.conv1(x)) # Bx64xN
         x2 = F.relu(self.conv2(x1)) # Bx128xN
         x3 = F.relu(self.conv3(x2)) # Bx128xN
 
-        trans_feat = self.fstn(x3)
-        x = torch.bmm(x3.transpose(2, 1), trans_feat)
-        x = x.transpose(2, 1)
+        # trans_feat = self.fstn(x3)
+        # x = torch.bmm(x3.transpose(2, 1), trans_feat)
+        # x = x.transpose(2, 1)
 
-        x4 = F.relu(self.conv4(x)) #Bx128xN
+        x4 = F.relu(self.conv4(x3)) #Bx128xN
         x5 = F.relu(self.conv5(x4)) #Bx512xN
         x6 = F.relu(self.conv6(x5)) #Bx2048xN
 
@@ -259,7 +259,7 @@ class PointNetSeg(nn.Module):
         x = self.fc4(x)
         x = x.transpose(1,2) # BxCxN
 
-        return x, x_global, trans, trans_feat
+        return x, x_global
 
 
 class PointNetDenseCls(nn.Module):

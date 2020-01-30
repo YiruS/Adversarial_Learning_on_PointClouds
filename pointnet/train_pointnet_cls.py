@@ -12,7 +12,7 @@ sys.path.append("%s/.." % file_path)
 
 from dataset.modelNetData import ModelNetDatasetGT
 from utils.utils import make_logger
-from utils.trainer import run_training_pointnet, run_testing
+from utils.trainer import run_training_pointnet_cls, run_testing
 from utils.model_utils import load_models
 
 
@@ -148,7 +148,7 @@ def main(args):
 
         trainloader_gt_iter = enumerate(trainloader_gt)
 
-        run_training_pointnet(
+        run_training_pointnet_cls(
             trainloader_gt=trainloader_gt,
             trainloader_gt_iter=trainloader_gt_iter,
             testloader=testloader,

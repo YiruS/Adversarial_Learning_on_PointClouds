@@ -107,6 +107,13 @@ class ShapeNetDatasetGT(data.Dataset):
                  num_pts=2048,
         ):
         self.sample_list = sample_list
+
+        try:
+            if isinstance(self.sample_list, np.ndarray):
+                print("GT sample list {}......".format(len(self.sample_list)))
+        except NameError:
+            print("No GT sample list!")
+
         self.num_classes = num_classes
         self.npts = num_pts
         # self.data_augmentation = data_augmentation
