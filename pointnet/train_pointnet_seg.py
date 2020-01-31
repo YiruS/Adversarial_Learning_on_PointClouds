@@ -43,13 +43,11 @@ def parse_arguments():
 
     parser.add_argument("--input_pts", type=int, default=2048, help="#pts per object")
     parser.add_argument("--num_epochs", type=int, default=200, help="#epochs")
-    parser.add_argument("--save_per_epoch", type=int, default=2, help="#epochs to save .pth")
+    parser.add_argument("--save_per_epoch", type=int, default=5, help="#epochs to save .pth")
     parser.add_argument("--test_epoch", type=int, default=5, help="#epochs to test")
 
     parser.add_argument('--lambda_seg', type=float, default=1.0,
                         help='hyperparams for seg source')
-    parser.add_argument('--lambda_regu', type=float, default=0.001,
-                        help='hyperparams for regulization')
 
     parser.add_argument('--checkpoint', type=str, default=None,
                         help='Pretrained model (.pth)')
@@ -104,7 +102,10 @@ def main(args):
         print("====== Loading Training Data ======")
         print("===================================")
 
-        sample_gt_list = np.load(args.gt_sample_list)
+        if args.gt_sample_list != None:
+            sample_gt_list = np.load(args.gt_sample_list)
+        else:
+            sample_gt_list = None
 
         trainset_gt = ShapeNetDatasetGT(
             root_list=args.train_file,
@@ -184,6 +185,7 @@ def main(args):
 
         run_testing_seg(
             dataloader=testloader,
+            dataset=testset,
             model=model,
             criterion=criterion,
             logger=test_logger,
