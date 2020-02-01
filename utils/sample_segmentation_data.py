@@ -114,7 +114,7 @@ for i in range(len(object_names)):
     print("{} => {}".format(object_names[i], len(shape_list[i])))
 print("#total: {}".format(tot))
 
-sample_ratio = 0.5
+sample_ratio = 0.75
 sample_index = []
 sample_class_num = np.empty(len(object_names), dtype=np.int)
 
