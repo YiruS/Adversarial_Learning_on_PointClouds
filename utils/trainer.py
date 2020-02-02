@@ -759,22 +759,6 @@ def run_training_seg(
         optimizer.zero_grad()
         optimizer_D.zero_grad()
 
-        # adjust_learning_rate(
-        #     optimizer=optimizer_SS,
-        #     learning_rate=args.lr_SS,
-        #     i_iter=i_iter,
-        #     max_steps=args.total_iterations,
-        #     power=0.9,
-        # )
-        #
-        # adjust_learning_rate(
-        #     optimizer=optimizer_D,
-        #     learning_rate=args.lr_D,
-        #     i_iter=i_iter,
-        #     max_steps=args.total_iterations,
-        #     power=0.9,
-        # )
-
         ## train G ##
         for param in model_D.parameters():
             param.requires_grad = False
@@ -789,15 +773,10 @@ def run_training_seg(
         pts, cls, seg = batch
         pts, cls, seg = pts.to(args.device), cls.to(args.device), seg.long().to(args.device)
 
-        pred, global_gt, input_feat, high_feat = model(pts, cls)
+        pred, global_gt = model(pts, cls)
         l_seg = seg_loss(pred, seg)
         loss_seg_value += l_seg.item()
         pred_gt_softmax = F.softmax(pred, dim=1)
-        if high_feat is not None:
-            l_regu = feature_transform_regularizer(high_feat)
-            loss_regulization += l_regu.item()
-        else:
-            l_regu = None
 
         ## train with target ##
         try:
@@ -809,13 +788,8 @@ def run_training_seg(
         pts_nogt, cls_nogt = batch
         pts_nogt, cls_nogt = pts_nogt.to(args.device), cls_nogt.to(args.device)
 
-        pred_nogt, global_nogt, input_feat, high_feat = model(pts_nogt, cls_nogt)
+        pred_nogt, global_nogt = model(pts_nogt, cls_nogt)
         pred_nogt_softmax = F.log_softmax(pred_nogt, dim=1)
-        if high_feat is not None:
-            l_regu = feature_transform_regularizer(high_feat)
-            loss_regulization += l_regu.item()
-        else:
-            l_regu = None
 
         D_out = model_D(pred_nogt_softmax)  #Bx1xC
         generated_label = make_D_label(
@@ -828,13 +802,8 @@ def run_training_seg(
         loss_adv = gan_loss(D_out, generated_label)
         loss_adv_value += loss_adv.item()
 
-        if l_regu is None:
-            loss = args.lambda_seg * l_seg + \
-                   args.lambda_adv * loss_adv
-        else:
-            loss = args.lambda_seg * l_seg + \
-                   args.lambda_adv * loss_adv + \
-                   args.lambda_regu * l_regu
+        loss = args.lambda_seg * l_seg + \
+               args.lambda_adv * loss_adv
         loss.backward()
 
         ## train D ##
@@ -877,12 +846,10 @@ def run_training_seg(
         train_logger.info('iter = {0:8d}/{1:8d} '
               'loss_seg = {2:.3f} '
               'loss_adv = {3:.3f} '
-              'loss regu = {4:.3f} '
-              'loss_D = {5:.3f}'.format(
+              'loss_D = {4:.3f} '.format(
                 i_iter, args.total_iterations,
                 loss_seg_value,
                 loss_adv_value,
-                loss_regulization,
                 loss_D_value,
             )
         )
@@ -993,15 +960,10 @@ def run_training_seg_semi(
         pts, cls, seg = batch
         pts, cls, seg = pts.to(args.device), cls.to(args.device), seg.long().to(args.device)
 
-        pred, global_gt, input_feat, high_feat = model(pts, cls)
+        pred, global_gt = model(pts, cls)
         l_seg = seg_loss(pred, seg)
         loss_seg_value += l_seg.item()
         pred_gt_softmax = F.softmax(pred, dim=1)
-        if high_feat is not None:
-            l_regu = feature_transform_regularizer(high_feat)
-            loss_regulization += l_regu.item()
-        else:
-            l_regu = None
 
         ## train with target ##
         try:
@@ -1013,13 +975,8 @@ def run_training_seg_semi(
         pts_nogt, cls_nogt = batch
         pts_nogt, cls_nogt = pts_nogt.to(args.device), cls_nogt.to(args.device)
 
-        pred_nogt, global_nogt, input_feat, high_feat = model(pts_nogt, cls_nogt)
+        pred_nogt, global_nogt = model(pts_nogt, cls_nogt)
         pred_nogt_softmax = F.log_softmax(pred_nogt, dim=1)
-        if high_feat is not None:
-            l_regu = feature_transform_regularizer(high_feat)
-            loss_regulization += l_regu.item()
-        else:
-            l_regu = None
 
         D_out = model_D(pred_nogt_softmax)  #Bx1xC
         generated_label = make_D_label(
@@ -1031,15 +988,6 @@ def run_training_seg_semi(
 
         l_adv = gan_loss(D_out, generated_label)
         loss_adv_value += l_adv.item()
-
-        # if l_regu is None:
-        #     loss = args.lambda_seg * l_seg + \
-        #            args.lambda_adv * loss_adv
-        # else:
-        #     loss = args.lambda_seg * l_seg + \
-        #            args.lambda_adv * loss_adv + \
-        #            args.lambda_regu * l_regu
-        # loss.backward()
 
         ## semi loss for unlabeled pts ##
         if (args.semi_start > 0) and (i_iter > args.semi_start):
@@ -1058,15 +1006,10 @@ def run_training_seg_semi(
         else:
             l_semi = None
 
-        if (l_semi is not None) and (l_regu is None):
+        if (l_semi is not None):
             loss_SEG_Net = args.lambda_seg * l_seg + \
                            args.lambda_adv * l_adv + \
                            args.lambda_semi * l_semi
-        elif (l_semi is not None) and (l_regu is not None):
-            loss_SEG_Net = args.lambda_seg * l_seg + \
-                           args.lambda_adv * l_adv + \
-                           args.lambda_semi * l_semi + \
-                           args.lambda_regu * l_regu
         else:
             loss_SEG_Net = args.lambda_seg * l_seg + \
                            args.lambda_adv * l_adv
@@ -1114,13 +1057,11 @@ def run_training_seg_semi(
               'loss_seg = {2:.3f} '
               'loss_adv = {3:.3f} '
               'loss semi = {4:.3f} '
-              'loss regu = {5:.3f} '
-              'loss_D = {6:.3f}'.format(
+              'loss_D = {5:.3f}'.format(
                 i_iter, args.total_iterations,
                 loss_seg_value,
                 loss_adv_value,
                 loss_semi_value,
-                loss_regulization,
                 loss_D_value,
             )
         )

@@ -19,13 +19,14 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 import torch.optim as optim
 
-RES_DIR = "/home/yirus/Projects/AdvSemiSeg/3D/results/segmentation"
+RES_DIR = "/home/yirus/Projects/Adversarial_Learning_on_PointClouds/results/seg"
 
 def parse_arguments():
-    parser = argparse.ArgumentParser(description="Transfer Learning for Eye Segmentation")
+    parser = argparse.ArgumentParser(description="Adversarial Learning on Point Clouds")
     parser.add_argument('name', type=str,
                         help="Name of the model for storing and loading purposes.")
 
+    parser.add_argument("--gt_sample_list", type=str, help="GT sample file", )
     parser.add_argument("--train_file", type=str,
                     default="/home/yirus/Datasets/shapeNet/hdf5_data/train_hdf5_file_list.txt",
                       help="data directory of Source dataset",)
@@ -130,14 +131,10 @@ def main(args):
         print("====== Loading Training Data ======")
         print("===================================")
 
-        random.seed(9001)
-
-        idx = np.arange(14007)
-        np.random.shuffle(idx)
-        sample_gt_list = idx[0:args.num_samples]
-        sample_nogt_list = idx[args.num_samples:]
-        filename = "gt_sample_{}.npy".format(args.name)
-        np.save(os.path.join(args.exp_dir, filename), sample_gt_list)
+        if args.gt_sample_list != None:
+            sample_gt_list = np.load(args.gt_sample_list)
+        else:
+            sample_gt_list = None
 
         trainset_gt = ShapeNetDatasetGT(
             root_list=args.train_file,
@@ -146,7 +143,7 @@ def main(args):
         )
         trainset_nogt = ShapeNetDataset_noGT(
             root_list=args.train_file,
-            sample_list=sample_nogt_list,
+            sample_list=sample_gt_list,
             num_classes=16,
         )
 

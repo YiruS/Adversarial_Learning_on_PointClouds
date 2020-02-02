@@ -214,6 +214,13 @@ class ShapeNetDataset_noGT(data.Dataset):
                  num_pts=2048,
         ):
         self.sample_list = sample_list
+
+        try:
+            if isinstance(self.sample_list, np.ndarray):
+                print("GT sample list {}......".format(len(self.sample_list)))
+        except NameError:
+            print("No GT sample list!")
+
         self.num_classes = num_classes
         self.npts = num_pts
         # self.data_augmentation = data_augmentation
@@ -221,7 +228,7 @@ class ShapeNetDataset_noGT(data.Dataset):
 
         self.load_data()
 
-        print("Loading GT data: {} ...".format(self.select_data.shape[0]))
+        print("Loading No-GT data: {} ...".format(self.select_data.shape[0]))
 
     def load_data(self):
         total_files = len(self.data_files)
@@ -242,14 +249,16 @@ class ShapeNetDataset_noGT(data.Dataset):
         all_labels = np.asarray(all_labels, dtype=np.int64)
         # all_segs = np.asarray(all_segs, dtype=np.int64)
 
-        if isinstance(self.sample_list, np.ndarray):
-            self.select_data = all_pts[self.sample_list,:,:]
-            self.select_labels = all_labels[self.sample_list]
-            # self.select_segs = all_segs[self.sample_list,:]
-        else:
-            self.select_data = all_pts.copy()
-            self.select_labels = all_labels.copy()
-            # self.select_segs = all_segs.copy()
+        gt_sample_list = self.sample_list
+        all_sample_list = np.arange(all_pts.shape[0])
+        nogt_sample_list = np.setdiff1d(all_sample_list, gt_sample_list)
+
+        assert (len(np.setdiff1d(nogt_sample_list, gt_sample_list)) == len(nogt_sample_list)), "Intersection!"
+        assert (len(np.setdiff1d(gt_sample_list, nogt_sample_list)) == len(gt_sample_list)), "Intersection!"
+
+        self.select_data = all_pts[nogt_sample_list,:,:]
+        self.select_labels = all_labels[nogt_sample_list]
+        # self.select_segs = all_segs.copy()
 
 
     def getDataFiles(self, list_filename):
