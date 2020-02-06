@@ -20,6 +20,7 @@ sys.path.append("%s/.." % file_path)
 sys.path.append("%s/../.." % file_path)
 
 from utils.utils import make_D_label, adjust_learning_rate
+from utils.metric import batch_get_iou, object_names
 from models.pointnet import feature_transform_regularizer
 
 INPUT_CHANNELS = 3
@@ -81,6 +82,11 @@ def run_testing_seg(
 
     total_accuracy = 0.0
     total_loss = 0.0
+
+    shape_ious = np.empty(len(object_names), dtype=np.object)
+    for i in range(shape_ious.shape[0]):
+        shape_ious[i] = []
+
     for batch_idx, data in tqdm.tqdm(enumerate(dataloader), total=dataloader.__len__()):
         pts, cls, seg = data
         pts, cls, seg = Variable(pts).float(), \
@@ -96,9 +102,32 @@ def run_testing_seg(
         total_accuracy += accu / float(args.input_pts)
         total_loss += loss.item()
 
-    logger.info("Test accuracy: {:.4f} loss: {:.3f}".format(
+        pred = pred_seg.cpu().numpy()
+        seg, cls = seg.cpu().numpy(), cls[:,0,:].cpu().numpy()
+        iou = batch_get_iou(batch_seg=seg, batch_pred=pred, batch_cls=cls)
+        for b in range(len(iou)):
+            cur_cls = np.argmax(cls[b,:])
+            shape_ious[cur_cls].append(iou[b])
+
+
+    # all_shape_ious = []
+    # for cat in shape_ious.keys():
+    #     for iou in shape_ious[cat]:
+    #         all_shape_ious.append(iou)
+    #     shape_ious[cat] = np.mean(shape_ious[cat])
+    # print(len(all_shape_ious))
+    cat_per_iou = [np.mean(i) for i in shape_ious]
+    all_iou = [i for s in shape_ious for i in s]
+    mean_cat_mious = np.mean(cat_per_iou)
+    mean_all_mious = np.mean(all_iou)
+    # for cat in sorted(shape_ious.keys()):
+    #     print('eval mIoU of %s:\t %f' % (cat, shape_ious[cat]))
+    # logger.info('Cat mIoU: {:.4f}'.format(cat_mious))
+    # logger.info('All mIoU: {:.4f}'.format(all_mious))
+    logger.info("Test accuracy: {:.4f}\tloss: {:.3f}\tcat_iou: {:.4f}\tall_iou: {:.4f}".format(
         total_accuracy / float(len(dataset)),
         total_loss / float(len(dataset)),
+        mean_cat_mious, mean_all_mious
     ))
 
     if args.tensorboard and (writer is not None):
@@ -108,7 +137,9 @@ def run_testing_seg(
                           total_accuracy / float(len(dataset)), test_iter)
 
     return total_accuracy / float(len(dataset)), \
-           total_loss / float(len(dataset))
+           total_loss / float(len(dataset)), \
+           mean_cat_mious, \
+           mean_all_mious
 
 
 def run_training_pointnet_cls(
@@ -213,6 +244,8 @@ def run_training_pointnet_seg(
     args,
 ):
     max_test_accu = float("-inf")
+    max_test_cat_iou = float("-inf")
+    max_test_all_iou = float("-inf")
 
     for i_iter in range(args.total_iterations):
         loss_seg_value = 0
@@ -254,7 +287,7 @@ def run_training_pointnet_seg(
                                                        "model_train_epoch_{}.pth").format(curr_epoch))
 
         if i_iter % args.iter_test_epoch == 0:
-            curr_accu, curr_loss = run_testing_seg(
+            curr_accu, curr_loss, curr_cat_miou, curr_all_miou = run_testing_seg(
                 dataset=testdataset,
                 dataloader=testloader,
                 model=model,
@@ -268,13 +301,26 @@ def run_training_pointnet_seg(
                 max_test_accu = curr_accu
                 max_train_epoch = i_iter // args.iter_test_epoch
                 torch.save(model.state_dict(), os.path.join(args.exp_dir,
-                                                            "model_train_best.pth"))
+                                                            "model_train_best_accu.pth"))
+            if max_test_cat_iou < curr_cat_miou:
+                max_test_cat_iou = curr_cat_miou
+                max_train_cat_epoch = i_iter // args.iter_test_epoch
+                torch.save(model.state_dict(), os.path.join(args.exp_dir,
+                                                            "model_train_best_cat_iou.pth"))
+            if max_test_all_iou < curr_all_miou:
+                max_test_all_iou = curr_all_miou
+                max_train_all_epoch = i_iter // args.iter_test_epoch
+                torch.save(model.state_dict(), os.path.join(args.exp_dir,
+                                                            "model_train_best_all_iou.pth"))
+
 
     if args.tensorboard:
         writer.close()
 
-    train_logger.info("Max test accuracy: {:.4f}".format(max_test_accu))
-    train_logger.info("Train model is at epoch: {}".format(max_train_epoch))
+    train_logger.info("=========================")
+    train_logger.info("Max test accuracy: {:.4f}, at epoch: {}".format(max_test_accu, max_train_epoch))
+    train_logger.info("Max cat mIoU: {:.4f}, at epoch: {}".format(max_test_cat_iou, max_train_cat_epoch))
+    train_logger.info("Max all mIoU: {:.4f}, at epoch: {}".format(max_test_all_iou, max_train_all_epoch))
 
 
 def run_training(
@@ -745,12 +791,11 @@ def run_training_seg(
 ):
     gt_label = 1
     nogt_label = 0
-    max_seg_accu = float("-inf")
+    max_seg_accu, max_test_cat_iou, max_test_all_iou = float("-inf"), float("-inf"), float("-inf")
 
     for i_iter in range(args.total_iterations):
         loss_seg_value = 0
         loss_adv_value = 0
-        loss_regulization = 0
         loss_D_value = 0
 
         model.train()
@@ -866,7 +911,7 @@ def run_training_seg(
             torch.save(model_D.state_dict(), os.path.join(args.exp_dir,
                                                          "modelD_train_epoch_{}.pth").format(curr_epoch))
 
-            curr_accu, curr_loss = run_testing_seg(
+            curr_accu, curr_loss, curr_cat_iou, curr_all_iou = run_testing_seg(
                 dataloader=testloader,
                 dataset=testdataset,
                 model=model,
@@ -880,13 +925,25 @@ def run_training_seg(
             if max_seg_accu < curr_accu:
                 max_seg_accu = curr_accu
                 max_train_epoch = i_iter // args.iter_test_epoch
-                torch.save(model.state_dict(), os.path.join(args.exp_dir,
-                                                            "model_train_best.pth"))
-                torch.save(model_D.state_dict(), os.path.join(args.exp_dir,
-                                                              "modelD_train_best.pth"))
+                torch.save(model.state_dict(), os.path.join(args.exp_dir, "model_train_best.pth"))
+                torch.save(model_D.state_dict(), os.path.join(args.exp_dir, "modelD_train_best.pth"))
 
-    test_logger.info("Max test accuracy: {:.4f} ".format(max_seg_accu))
-    test_logger.info("Max train epoch: {} ".format(max_train_epoch))
+            if max_test_cat_iou < curr_cat_iou:
+                max_test_cat_iou = curr_cat_iou
+                max_train_cat_epoch = i_iter // args.iter_test_epoch
+                torch.save(model.state_dict(), os.path.join(args.exp_dir, "model_train_best_cat_iou.pth"))
+                torch.save(model_D.state_dict(), os.path.join(args.exp_dir, "modelD_train_best_cat_iou.pth"))
+
+            if max_test_all_iou < curr_all_iou:
+                max_test_all_iou = curr_all_iou
+                max_train_all_epoch = i_iter // args.iter_test_epoch
+                torch.save(model.state_dict(), os.path.join(args.exp_dir, "model_train_best_all_iou.pth"))
+                torch.save(model_D.state_dict(), os.path.join(args.exp_dir, "modelD_train_best_all_iou.pth"))
+
+    train_logger.info("=========================")
+    train_logger.info("Max accuracy: {:.4f}, at epoch: {}".format(max_seg_accu, max_train_epoch))
+    train_logger.info("Max cat mIoU: {:.4f}, at epoch: {}".format(max_test_cat_iou, max_train_cat_epoch))
+    train_logger.info("Max all mIoU: {:.4f}, at epoch: {}".format(max_test_all_iou, max_train_all_epoch))
 
     if args.tensorboard:
         writer.close()
@@ -915,13 +972,12 @@ def run_training_seg_semi(
 ):
     gt_label = 1
     nogt_label = 0
-    max_seg_accu = float("-inf")
+    max_seg_accu, max_test_cat_iou, max_test_all_iou = float("-inf"), float("-inf"), float("-inf")
 
     for i_iter in range(args.total_iterations):
         loss_seg_value = 0
         loss_adv_value = 0
         loss_semi_value = 0
-        loss_regulization = 0
         loss_D_value = 0
 
         model.train()
@@ -1078,7 +1134,7 @@ def run_training_seg_semi(
             torch.save(model_D.state_dict(), os.path.join(args.exp_dir,
                                                          "modelD_train_epoch_{}.pth").format(curr_epoch))
 
-            curr_accu, curr_loss = run_testing_seg(
+            curr_accu, curr_loss, curr_cat_iou, curr_all_iou = run_testing_seg(
                 dataloader=testloader,
                 dataset=testdataset,
                 model=model,
@@ -1093,8 +1149,22 @@ def run_training_seg_semi(
                 max_seg_accu = curr_accu
                 max_train_epoch = i_iter // args.iter_test_epoch
 
-    test_logger.info("Max test accuracy: {:.4f} ".format(max_seg_accu))
-    test_logger.info("Max train epoch: {} ".format(max_train_epoch))
+            if max_test_cat_iou < curr_cat_iou:
+                max_test_cat_iou = curr_cat_iou
+                max_train_cat_epoch = i_iter // args.iter_test_epoch
+                torch.save(model.state_dict(), os.path.join(args.exp_dir, "model_train_best_cat_iou.pth"))
+                torch.save(model_D.state_dict(), os.path.join(args.exp_dir, "modelD_train_best_cat_iou.pth"))
+
+            if max_test_all_iou < curr_all_iou:
+                max_test_all_iou = curr_all_iou
+                max_train_all_epoch = i_iter // args.iter_test_epoch
+                torch.save(model.state_dict(), os.path.join(args.exp_dir, "model_train_best_all_iou.pth"))
+                torch.save(model_D.state_dict(), os.path.join(args.exp_dir, "modelD_train_best_all_iou.pth"))
+
+    train_logger.info("=========================")
+    train_logger.info("Max accuracy: {:.4f}, at epoch: {}".format(max_seg_accu, max_train_epoch))
+    train_logger.info("Max cat mIoU: {:.4f}, at epoch: {}".format(max_test_cat_iou, max_train_cat_epoch))
+    train_logger.info("Max all mIoU: {:.4f}, at epoch: {}".format(max_test_all_iou, max_train_all_epoch))
 
     if args.tensorboard:
         writer.close()

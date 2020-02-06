@@ -1,99 +1,39 @@
-import os, sys
+
 import numpy as np
 
-from multiprocessing import Pool 
-import copy_reg
-import types
-def _pickle_method(m):
-    if m.im_self is None:
-        return getattr, (m.im_class, m.im_func.func_name)
-    else:
-        return getattr, (m.im_self, m.im_func.func_name)
+object_names = ['Airplane', 'Bag', 'Cap', 'Car', 'Chair', 'Earphone', 'Guitar', 'Knife', 'Lamp',
+                'Laptop', 'Motorbike', 'Mug', 'Pistol', 'Rocket', 'Skateboard', 'Table']
+seg_classes = {'Earphone': [16, 17, 18], 'Motorbike': [30, 31, 32, 33, 34, 35], 'Rocket': [41, 42, 43], 'Car': [8, 9, 10, 11], 'Laptop': [28, 29], 'Cap': [6, 7], 'Skateboard': [44, 45, 46], 'Mug': [36, 37], 'Guitar': [19, 20, 21], 'Bag': [4, 5], 'Lamp': [24, 25, 26, 27], 'Table': [47, 48, 49], 'Airplane': [0, 1, 2, 3], 'Pistol': [38, 39, 40], 'Chair': [12, 13, 14, 15], 'Knife': [22, 23]}
+part_colors = [[0.65, 0.95, 0.05], [0.35, 0.05, 0.35], [0.65, 0.35, 0.65], [0.95, 0.95, 0.65], [0.95, 0.65, 0.05], [0.35, 0.05, 0.05], [0.65, 0.05, 0.05], [0.65, 0.35, 0.95], [0.05, 0.05, 0.65], [0.65, 0.05, 0.35], [0.05, 0.35, 0.35], [0.65, 0.65, 0.35], [0.35, 0.95, 0.05], [0.05, 0.35, 0.65], [0.95, 0.95, 0.35], [0.65, 0.65, 0.65], [0.95, 0.95, 0.05], [0.65, 0.35, 0.05], [0.35, 0.65, 0.05], [0.95, 0.65, 0.95], [0.95, 0.35, 0.65], [0.05, 0.65, 0.95], [0.65, 0.95, 0.65], [0.95, 0.35, 0.95], [0.05, 0.05, 0.95], [0.65, 0.05, 0.95], [0.65, 0.05, 0.65], [0.35, 0.35, 0.95], [0.95, 0.95, 0.95], [0.05, 0.05, 0.05], [0.05, 0.35, 0.95], [0.65, 0.95, 0.95], [0.95, 0.05, 0.05], [0.35, 0.95, 0.35], [0.05, 0.35, 0.05], [0.05, 0.65, 0.35], [0.05, 0.95, 0.05], [0.95, 0.65, 0.65], [0.35, 0.95, 0.95], [0.05, 0.95, 0.35], [0.95, 0.35, 0.05], [0.65, 0.35, 0.35], [0.35, 0.95, 0.65], [0.35, 0.35, 0.65], [0.65, 0.95, 0.35], [0.05, 0.95, 0.65], [0.65, 0.65, 0.95], [0.35, 0.05, 0.95], [0.35, 0.65, 0.95], [0.35, 0.05, 0.65]]
 
-copy_reg.pickle(types.MethodType, _pickle_method)
+cls_shape_cnt = {}
+for shape_cls in object_names:
+    cls_shape_cnt[shape_cls] = 0
 
-class ConfusionMatrix(object):
+seg_label_to_cat = {} # {0:Airplane, 1:Airplane, ...49:Table}
+for cat in seg_classes.keys():
+    for label in seg_classes[cat]:
+        seg_label_to_cat[label] = cat
 
-    def __init__(self, nclass, classes=None):
-        self.nclass = nclass
-        self.classes = classes
-        self.M = np.zeros((nclass, nclass))
+shape_ious = {cat: [] for cat in seg_classes.keys()}
 
-    def add(self, gt, pred):
-        assert(np.max(pred) <= self.nclass)
-        assert(len(gt) == len(pred))
-        for i in range(len(gt)):
-            if not gt[i] == 255:
-                self.M[gt[i], pred[i]] += 1.0
+def get_iou(gt, pred, cls_gt):
+    cls_name = object_names[cls_gt]
+    shape_cat = seg_classes[cls_name]
+    part_ious = [0.0 for _ in range(len(shape_cat))]
+    for l in shape_cat:
+        if (np.sum(pred == l) == 0) and (np.sum(gt == l) == 0):  # part is not present, no prediction as well
+            part_ious[l - shape_cat[0]] = 1.0
+        else:
+            part_ious[l - shape_cat[0]] = np.sum((gt == l) & (pred == l)) / float(
+                np.sum((gt == l) | (pred == l)))
+    shape_ious[cls_name].append(np.mean(part_ious))
+    return np.mean(part_ious)
 
-    def addM(self, matrix):
-        assert(matrix.shape == self.M.shape)
-        self.M += matrix
-
-    def __str__(self):
-        pass
-
-    def recall(self):
-        recall = 0.0
-        for i in xrange(self.nclass):
-            recall += self.M[i, i] / np.sum(self.M[:, i])
-
-        return recall/self.nclass
-
-    def accuracy(self):
-        accuracy = 0.0
-        for i in xrange(self.nclass):
-            accuracy += self.M[i, i] / np.sum(self.M[i, :])
-
-        return accuracy/self.nclass
-
-    def jaccard(self):
-        jaccard = 0.0
-        jaccard_perclass = []
-        for i in xrange(self.nclass):
-            if not self.M[i, i] == 0:
-                jaccard_perclass.append(self.M[i, i] / (np.sum(self.M[i, :]) + np.sum(self.M[:, i]) - self.M[i, i]))
-
-        return np.sum(jaccard_perclass)/len(jaccard_perclass), jaccard_perclass, self.M
-
-    def generateM(self, item):
-        gt, pred = item
-        m = np.zeros((self.nclass, self.nclass))
-        assert(len(gt) == len(pred))
-        for i in range(len(gt)):
-            if gt[i] < self.nclass: #and pred[i] < self.nclass:
-                m[gt[i], pred[i]] += 1.0
-        return m
-
-
-if __name__ == '__main__':
-    args = parse_args()
-
-    m_list = []
-    data_list = []
-    test_ids = [i.strip() for i in open(args.test_ids) if not i.strip() == '']
-    for index, img_id in enumerate(test_ids):
-        if index % 100 == 0:
-            print('%d processd'%(index))
-        pred_img_path = os.path.join(args.pred_dir, img_id+'.png')
-        gt_img_path = os.path.join(args.gt_dir, img_id+'.png')
-        pred = cv2.imread(pred_img_path, cv2.IMREAD_GRAYSCALE)
-        gt = cv2.imread(gt_img_path, cv2.IMREAD_GRAYSCALE)
-        # show_all(gt, pred)
-        data_list.append([gt.flatten(), pred.flatten()])
-
-    ConfM = ConfusionMatrix(args.class_num)
-    f = ConfM.generateM
-    pool = Pool() 
-    m_list = pool.map(f, data_list)
-    pool.close() 
-    pool.join() 
-    
-    for m in m_list:
-        ConfM.addM(m)
-
-    aveJ, j_list, M = ConfM.jaccard()
-    with open(args.save_path, 'w') as f:
-        f.write('meanIOU: ' + str(aveJ) + '\n')
-        f.write(str(j_list)+'\n')
-        f.write(str(M)+'\n')
+def batch_get_iou(batch_pred, batch_seg, batch_cls):
+    batch_iou = []
+    for i in range(batch_pred.shape[0]):
+        cls = np.argmax(batch_cls[i,:])
+        iou = get_iou(batch_seg[i], batch_pred[i],cls)
+        batch_iou.append(iou)
+    return batch_iou

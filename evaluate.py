@@ -141,11 +141,19 @@ def main():
             print('processd {}'.format(index))
         points, cls_gt, seg_gt = batch
         with torch.no_grad():
-            points, cls_gt, seg_gt = Variable(points).float(), Variable(cls_gt).float(), Variable(seg_gt).type(torch.LongTensor)
+            points, cls_gt, seg_gt = Variable(points).float(), \
+                                     Variable(cls_gt).float(), \
+                                     Variable(seg_gt).type(torch.LongTensor)
             points, cls_gt, seg_gt = points.to(device), cls_gt.to(device), seg_gt.to(device)
             seg_pred = model(points, cls_gt)
-            points, gt, pred, cls_gt = points.data.cpu().numpy(), seg_gt.data.cpu().numpy(), np.argmax(seg_pred.cpu().numpy(),axis=2), cls_gt.data.cpu().numpy()
-            points, gt, pred, cls_gt = np.squeeze(points), np.squeeze(gt), np.squeeze(pred), np.where(np.squeeze(cls_gt)==1)[0][0]
+            points, gt, pred, cls_gt = points.data.cpu().numpy(), \
+                                       seg_gt.data.cpu().numpy(), \
+                                       np.argmax(seg_pred.cpu().numpy(),axis=2), \
+                                       cls_gt.data.cpu().numpy()
+            points, gt, pred, cls_gt = np.squeeze(points), \
+                                       np.squeeze(gt), \
+                                       np.squeeze(pred), \
+                                       np.where(np.squeeze(cls_gt)==1)[0][0]
             # print("shape: {}".format(object_names[cls_gt]))
             cls_shape_cnt[object_names[cls_gt]] += 1
             iou = get_iou(gt, pred, cls_gt)
