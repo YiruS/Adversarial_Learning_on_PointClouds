@@ -275,10 +275,9 @@ def main(args):
         )
         D_params_shape = (list(shapeDisc.parameters()) + list(sharedDisc.parameters()))
         D_params_point = (list(pointDisc.parameters()) + list(sharedDisc.parameters()))
-        optimizer_D_shape = optim.Adam(
+        optimizer_D_shape = optim.SGD(
             D_params_shape,
             lr=args.lr_D*0.2,
-            betas=(0.9, 0.999),
         )
         optimizer_D_shape.zero_grad()
         # optimizer_D_point = optim.Adam(

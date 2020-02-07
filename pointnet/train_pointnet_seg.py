@@ -97,7 +97,7 @@ def main(args):
     else:
         writer = None
 
-    if (args.train or args.run_semi) and args.test:
+    if args.train  and args.test:
         print("===================================")
         print("====== Loading Training Data ======")
         print("===================================")

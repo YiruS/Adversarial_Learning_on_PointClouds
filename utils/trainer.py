@@ -135,6 +135,8 @@ def run_testing_seg(
                           total_loss / float(len(dataset)), test_iter)
         writer.add_scalar('Accuracy/test',
                           total_accuracy / float(len(dataset)), test_iter)
+        writer.add_scalar('IoU/test_cat_iou', mean_cat_mious, test_iter)
+        writer.add_scalar('IoU/test_all_iou', mean_all_mious, test_iter)
 
     return total_accuracy / float(len(dataset)), \
            total_loss / float(len(dataset)), \
@@ -1352,6 +1354,25 @@ def run_training_seg_dual(
             writer.add_scalar('Loss/train_adv', loss_adv_value, i_iter)
             writer.add_scalar('Loss/disc_point', loss_D_point_value, i_iter)
             writer.add_scalar('Loss/disc_shape', loss_D_shape_value, i_iter)
+            try:
+                curr_cat_iou
+                writer.add_scalar('IoU/cat_iou', curr_cat_iou, i_iter)
+            except NameError:
+                pass
+            try:
+                curr_all_iou
+                writer.add_scalar('IoU/all_iou', curr_all_iou, i_iter)
+            except NameError:
+                pass
+            try:
+                curr_accu
+                writer.add_scalar('Accuracy/train_seg', curr_accu, i_iter)
+            except NameError:
+                pass
+
+            # writer.add_scalar('IoU/cat_iou', curr_cat_iou, i_iter)
+            # writer.add_scalar('IoU/all_iou', curr_all_iou, i_iter)
+            # writer.add_scalar('Accuracy/train_seg', curr_accu, i_iter)
 
         if i_iter % args.iter_test_epoch == 0:
             curr_epoch = i_iter // args.iter_test_epoch
