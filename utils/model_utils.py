@@ -5,7 +5,7 @@ import torch
 from torch.nn import init
 
 from models.discriminator import DeepConvDiscNet, PointwiseDiscNet
-from models.discriminator import SharedPointDiscNet, SharedShapeDiscNet
+from models.discriminator import BaseDiscNet, ShapeDiscNet, PointDiscNet
 from models.pointnet import PointNetCls, PointNetSeg
 
 def init_net(net, device, init_type, init_gain=1.0):
@@ -102,19 +102,23 @@ def load_models(mode, device, args):
         model = init_net(model, device, init_type=args.init_disc)
 
     elif mode == "disc_dual":
-        model_point = SharedPointDiscNet(
-            input_pts=args.input_pts,
-            input_dim=args.disc_indim,
-            shared_output_dim=128)
-        model_shape = SharedShapeDiscNet(
-            input_pts=args.input_pts,
-            input_dim=args.disc_indim,
-            shared_output_dim=128,
-            num_shapes=16,
-        )
-        model_point = init_net(model_point, device, init_type=args.init_disc)
-        model_shape = init_net(model_shape, device, init_type=args.init_disc)
-        return model_point, model_shape
+        shared_disc = BaseDiscNet(input_pts=args.input_pts,input_dim=args.disc_indim, output_dim=256)
+        shapeDisc = ShapeDiscNet(shared_output_dim=256, num_shapes=16)
+        pointDisc = PointDiscNet(shared_output_dim=256, input_pts=args.input_pts)
+        # model_point = SharedPointDiscNet(
+        #     input_pts=args.input_pts,
+        #     input_dim=args.disc_indim,
+        #     shared_output_dim=128)
+        # model_shape = SharedShapeDiscNet(
+        #     input_pts=args.input_pts,
+        #     input_dim=args.disc_indim,
+        #     shared_output_dim=128,
+        #     num_shapes=16,
+        # )
+        shared_disc = init_net(shared_disc, device, init_type=args.init_disc)
+        shapeDisc = init_net(shapeDisc, device, init_type=args.init_disc)
+        pointDisc = init_net(pointDisc, device, init_type=args.init_disc)
+        return shared_disc, shapeDisc, pointDisc
     else:
         raise ValueError("Invalid mode {}!".format(mode))
 

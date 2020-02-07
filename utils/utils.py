@@ -22,9 +22,9 @@ def make_logger(filename, args):
 def make_D_label(input, value, device, random=False):
     if random:
         if value == 0:
-            lower, upper = 0, 0.205
+            lower, upper = 0, 0.305
         elif value == 1:
-            lower, upper = 0.8, 1.05
+            lower, upper = 0.7, 1.05
         D_label = torch.FloatTensor(input.data.size()).uniform_(lower, upper).to(device)
     else:
         D_label = torch.FloatTensor(input.data.size()).fill_(value).to(device)

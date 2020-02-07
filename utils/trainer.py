@@ -1168,3 +1168,234 @@ def run_training_seg_semi(
 
     if args.tensorboard:
         writer.close()
+
+def run_training_seg_dual(
+    trainloader_gt,
+    trainloader_nogt,
+    trainloader_gt_iter,
+    targetloader_nogt_iter,
+    testloader,
+    testdataset,
+    model,
+    sharedDisc,
+    shapeDisc,
+    pointDisc,
+    gan_point_loss,
+    gan_shape_loss,
+    seg_loss,
+    optimizer,
+    optimizer_D,
+    history_pool_gt,
+    history_pool_nogt,
+    train_logger,
+    test_logger,
+    writer,
+    args,
+):
+    gt_label = 1
+    nogt_label = 0
+    max_seg_accu, max_test_cat_iou, max_test_all_iou = float("-inf"), float("-inf"), float("-inf")
+
+    for i_iter in range(args.total_iterations):
+
+        # curr_epoch = i_iter // args.iter_per_epoch
+
+        loss_seg_value = 0.
+        loss_adv_value = 0.
+        loss_D_point_value = 0.
+        loss_D_shape_value = 0.
+
+        model.train()
+        sharedDisc.train()
+        shapeDisc.train()
+        pointDisc.train()
+
+        optimizer.zero_grad()
+        optimizer_D.zero_grad()
+
+        for param in sharedDisc.parameters():
+            param.requires_grad = False
+        for param in shapeDisc.parameters():
+            param.requires_grad = False
+        for param in pointDisc.parameters():
+            param.requires_grad = False
+
+        ## train with points w/ GT ##
+        try:
+            _, batch = next(trainloader_gt_iter)
+        except StopIteration:
+            trainloader_gt_iter = enumerate(trainloader_gt)
+            _, batch = next(trainloader_gt_iter)
+
+        pts, cls, seg = batch
+        pts, cls, seg = pts.to(args.device), cls.to(args.device), seg.long().to(args.device)
+
+        pred, global_gt = model(pts, cls)
+        l_seg = seg_loss(pred, seg)
+        loss_seg_value += l_seg.item()
+        pred_gt_softmax = F.softmax(pred, dim=1)
+
+        ## train with target ##
+        try:
+            _, batch = next(targetloader_nogt_iter)
+        except StopIteration:
+            targetloader_nogt_iter = enumerate(trainloader_nogt)
+            _, batch = next(targetloader_nogt_iter)
+
+        pts_nogt, cls_nogt = batch
+        pts_nogt, cls_nogt = pts_nogt.to(args.device), cls_nogt.to(args.device)
+
+        pred_nogt, global_nogt = model(pts_nogt, cls_nogt)
+        pred_nogt_softmax = F.log_softmax(pred_nogt, dim=1)
+
+        D_shared = sharedDisc(pred_nogt_softmax)
+        D_point = pointDisc(D_shared) # BxN
+
+        generated_label = make_D_label(
+            input=D_point,
+            value=gt_label,
+            device=args.device,
+            random=False,
+        )
+
+        loss_adv = gan_point_loss(D_point, generated_label)
+        loss_adv_value += loss_adv.item()
+
+        loss = args.lambda_seg * l_seg + args.lambda_adv * loss_adv
+        loss.backward()
+        optimizer.step()
+
+        # if i_iter >= int(5*args.iter_per_epoch):
+
+        ## train D-point ##
+        for param in sharedDisc.parameters():
+            param.requires_grad = True
+        for param in shapeDisc.parameters():
+            param.requires_grad = True
+        for param in pointDisc.parameters():
+            param.requires_grad = True
+
+        ## train w/ GT ##
+        pred_gt_softmax = pred_gt_softmax.detach()
+        pool_gt = history_pool_gt.query(pred_gt_softmax)
+
+        D_shared = sharedDisc(pool_gt)
+        D_point = pointDisc(D_shared)  # BxN
+
+        generated_label = make_D_label(
+            input=D_point,
+            value=gt_label,
+            device=args.device,
+            random=True,
+        )
+        loss_D_point_gt = 0.5*gan_point_loss(D_point, generated_label)
+        loss_D_point_value += 0.5*loss_D_point_gt.item()
+
+        ## train wo GT ##
+        pred_nogt_softmax = pred_nogt_softmax.detach()
+        pool_nogt = history_pool_nogt.query(pred_nogt_softmax)
+
+        D_shared = sharedDisc(pool_nogt)
+        D_point = pointDisc(D_shared)  # BxN
+
+        generated_label = make_D_label(
+            input=D_point,
+            value=nogt_label,
+            device=args.device,
+            random=True,
+        )
+        loss_D_point_nogt = 0.5*gan_point_loss(D_point, generated_label)
+        loss_D_point_value += 0.5*loss_D_point_nogt.item()
+
+        if i_iter <= (5*args.iter_per_epoch):
+            loss_D_all = loss_D_point_gt + loss_D_point_nogt
+            loss_D_all.backward()
+            optimizer_D.step()
+        else:
+            ## train D-shape ##
+            D_shared = sharedDisc(pred_gt_softmax)
+            D_shape = shapeDisc(D_shared)  # BxN
+            cls_gt = cls.argmax(dim=2).squeeze(1)
+            loss_D_shape = gan_shape_loss(D_shape, cls_gt.long())
+            loss_D_shape_value += loss_D_shape.item()
+
+            loss_D_all = loss_D_point_gt + loss_D_point_nogt + args.lambda_disc_shape * loss_D_shape
+            loss_D_all.backward()
+            optimizer_D.step()
+
+        train_logger.info('iter = {0:8d}/{1:8d} '
+              'loss_seg = {2:.3f} '
+              'loss_adv = {3:.3f} '
+              'loss D_point = {4:.3f} '
+              'loss_D_shape = {5:.3f}'.format(
+                i_iter, args.total_iterations,
+                loss_seg_value,
+                loss_adv_value,
+                loss_D_point_value,
+                loss_D_shape_value,
+            )
+        )
+
+        if args.tensorboard:
+            writer.add_scalar('Loss/train_seg', loss_seg_value, i_iter)
+            writer.add_scalar('Loss/train_adv', loss_adv_value, i_iter)
+            writer.add_scalar('Loss/disc_point', loss_D_point_value, i_iter)
+            writer.add_scalar('Loss/disc_shape', loss_D_shape_value, i_iter)
+
+        if i_iter % args.iter_test_epoch == 0:
+            curr_epoch = i_iter // args.iter_test_epoch
+            train_logger.info("======= Testing on Epoch {} =======".format(curr_epoch))
+            # curr_epoch = i_iter // args.iter_test_epoch
+            torch.save(model.state_dict(), os.path.join(args.exp_dir,
+                                                       "model_train_epoch_{}.pth").format(curr_epoch))
+            torch.save(sharedDisc.state_dict(), os.path.join(args.exp_dir,
+                                                         "sharedDisc_train_epoch_{}.pth").format(curr_epoch))
+            torch.save(pointDisc.state_dict(), os.path.join(args.exp_dir,
+                                                             "pointDisc_train_epoch_{}.pth").format(curr_epoch))
+            torch.save(shapeDisc.state_dict(), os.path.join(args.exp_dir,
+                                                             "shapeDisc_train_epoch_{}.pth").format(curr_epoch))
+
+            curr_accu, curr_loss, curr_cat_iou, curr_all_iou = run_testing_seg(
+                dataset=testdataset,
+                dataloader=testloader,
+                model=model,
+                criterion=seg_loss,
+                logger=test_logger,
+                test_iter=i_iter,
+                writer=writer,
+                args=args,
+            )
+
+            if max_seg_accu < curr_accu:
+                max_seg_accu = curr_accu
+                max_train_epoch = i_iter // args.iter_test_epoch
+
+            if max_test_cat_iou < curr_cat_iou:
+                max_test_cat_iou = curr_cat_iou
+                max_train_cat_epoch = i_iter // args.iter_test_epoch
+                torch.save(model.state_dict(), os.path.join(args.exp_dir, "model_train_best_cat_iou.pth"))
+                torch.save(sharedDisc.state_dict(), os.path.join(args.exp_dir,
+                                                                 "sharedDisc_train_best_cat_iou"))
+                torch.save(pointDisc.state_dict(), os.path.join(args.exp_dir,
+                                                                "pointDisc_train_best_cat_iou"))
+                torch.save(shapeDisc.state_dict(), os.path.join(args.exp_dir,
+                                                                "shapeDisc_train_best_cat_iou"))
+
+            if max_test_all_iou < curr_all_iou:
+                max_test_all_iou = curr_all_iou
+                max_train_all_epoch = i_iter // args.iter_test_epoch
+                torch.save(model.state_dict(), os.path.join(args.exp_dir, "model_train_best_all_iou.pth"))
+                torch.save(sharedDisc.state_dict(), os.path.join(args.exp_dir,
+                                                                 "sharedDisc_train_best_all_iou"))
+                torch.save(pointDisc.state_dict(), os.path.join(args.exp_dir,
+                                                                "pointDisc_train_best_all_iou"))
+                torch.save(shapeDisc.state_dict(), os.path.join(args.exp_dir,
+                                                                "shapeDisc_train_best_all_iou"))
+
+    train_logger.info("=========================")
+    train_logger.info("Max accuracy: {:.4f}, at epoch: {}".format(max_seg_accu, max_train_epoch))
+    train_logger.info("Max cat mIoU: {:.4f}, at epoch: {}".format(max_test_cat_iou, max_train_cat_epoch))
+    train_logger.info("Max all mIoU: {:.4f}, at epoch: {}".format(max_test_all_iou, max_train_all_epoch))
+
+    if args.tensorboard:
+        writer.close()
