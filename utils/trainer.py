@@ -1296,7 +1296,7 @@ def run_training_seg_dual(
             random=True,
         )
         loss_D_point_gt = 0.5*gan_point_loss(D_point, generated_label)
-        loss_D_point_value += 0.5*loss_D_point_gt.item()
+        loss_D_point_value += loss_D_point_gt.item()
 
         ## train wo GT ##
         pred_nogt_softmax = pred_nogt_softmax.detach()
@@ -1312,27 +1312,27 @@ def run_training_seg_dual(
             random=True,
         )
         loss_D_point_nogt = 0.5*gan_point_loss(D_point, generated_label)
-        loss_D_point_value += 0.5*loss_D_point_nogt.item()
+        loss_D_point_value += loss_D_point_nogt.item()
 
-        if i_iter <= (5*args.iter_per_epoch):
-            loss_D_point_op = loss_D_point_gt + loss_D_point_nogt
-            loss_D_point_op.backward()
-            optimizer_D_point.step()
-        else:
-            ## train D-shape ##
-            loss_D_point_op = loss_D_point_gt + loss_D_point_nogt
-            loss_D_point_op.backward()
-            optimizer_D_point.step()
+        # if i_iter <= (5*args.iter_per_epoch):
+        #     loss_D_point_op = loss_D_point_gt + loss_D_point_nogt
+        #     loss_D_point_op.backward()
+        #     optimizer_D_point.step()
+        # else:
+        ## train D-shape ##
+        loss_D_point_op = loss_D_point_gt + loss_D_point_nogt
+        loss_D_point_op.backward()
+        optimizer_D_point.step()
 
-            D_shared = sharedDisc(pred_gt_softmax)
-            D_shape = shapeDisc(D_shared)  # BxN
-            cls_gt = cls.argmax(dim=2).squeeze(1)
-            loss_D_shape = gan_shape_loss(D_shape, cls_gt.long())
-            loss_D_shape_value += loss_D_shape.item()
+        D_shared = sharedDisc(pred_gt_softmax)
+        D_shape = shapeDisc(D_shared)  # BxN
+        cls_gt = cls.argmax(dim=2).squeeze(1)
+        loss_D_shape = gan_shape_loss(D_shape, cls_gt.long())
+        loss_D_shape_value += loss_D_shape.item()
 
-            loss_D_shape_op = args.lambda_disc_shape * loss_D_shape
-            loss_D_shape_op.backward()
-            optimizer_D_shape.step()
+        loss_D_shape_op = args.lambda_disc_shape * loss_D_shape
+        loss_D_shape_op.backward()
+        optimizer_D_shape.step()
 
         train_logger.info('iter = {0:8d}/{1:8d} '
               'loss_seg = {2:.3f} '
