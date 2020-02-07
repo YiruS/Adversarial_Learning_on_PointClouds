@@ -1184,7 +1184,8 @@ def run_training_seg_dual(
     gan_shape_loss,
     seg_loss,
     optimizer,
-    optimizer_D,
+    optimizer_D_shape,
+    optimizer_D_point,
     history_pool_gt,
     history_pool_nogt,
     train_logger,
@@ -1197,8 +1198,13 @@ def run_training_seg_dual(
     max_seg_accu, max_test_cat_iou, max_test_all_iou = float("-inf"), float("-inf"), float("-inf")
 
     for i_iter in range(args.total_iterations):
-
-        # curr_epoch = i_iter // args.iter_per_epoch
+        # if i_iter % (3*args.iter_test_epoch) == 0:
+        #     gt_label = 0
+        #     nogt_label = 1
+        # else:
+        #     gt_label = 1
+        #     nogt_label = 0
+        # # curr_epoch = i_iter // args.iter_per_epoch
 
         loss_seg_value = 0.
         loss_adv_value = 0.
@@ -1211,7 +1217,8 @@ def run_training_seg_dual(
         pointDisc.train()
 
         optimizer.zero_grad()
-        optimizer_D.zero_grad()
+        optimizer_D_shape.zero_grad()
+        optimizer_D_shape.zero_grad()
 
         for param in sharedDisc.parameters():
             param.requires_grad = False
@@ -1308,20 +1315,24 @@ def run_training_seg_dual(
         loss_D_point_value += 0.5*loss_D_point_nogt.item()
 
         if i_iter <= (5*args.iter_per_epoch):
-            loss_D_all = loss_D_point_gt + loss_D_point_nogt
-            loss_D_all.backward()
-            optimizer_D.step()
+            loss_D_point_op = loss_D_point_gt + loss_D_point_nogt
+            loss_D_point_op.backward()
+            optimizer_D_point.step()
         else:
             ## train D-shape ##
+            loss_D_point_op = loss_D_point_gt + loss_D_point_nogt
+            loss_D_point_op.backward()
+            optimizer_D_point.step()
+
             D_shared = sharedDisc(pred_gt_softmax)
             D_shape = shapeDisc(D_shared)  # BxN
             cls_gt = cls.argmax(dim=2).squeeze(1)
             loss_D_shape = gan_shape_loss(D_shape, cls_gt.long())
             loss_D_shape_value += loss_D_shape.item()
 
-            loss_D_all = loss_D_point_gt + loss_D_point_nogt + args.lambda_disc_shape * loss_D_shape
-            loss_D_all.backward()
-            optimizer_D.step()
+            loss_D_shape_op = args.lambda_disc_shape * loss_D_shape
+            loss_D_shape_op.backward()
+            optimizer_D_shape.step()
 
         train_logger.info('iter = {0:8d}/{1:8d} '
               'loss_seg = {2:.3f} '
