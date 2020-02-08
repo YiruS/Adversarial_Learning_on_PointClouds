@@ -278,6 +278,9 @@ def main(args):
 
         all_shapes_train_gt = np.empty((len(trainset_gt), 2048))
         for batch_idx, data in enumerate(trainloader_gt):
+            if batch_idx % 1000==0:
+                print("Processing {} ...".format(batch_idx))
+
             pts, cls, seg = data
             pts, cls, seg = Variable(pts).float(), \
                             Variable(cls), Variable(seg).type(torch.LongTensor)
@@ -293,6 +296,9 @@ def main(args):
 
         all_shapes_train_nogt = np.empty((len(trainset_nogt), 2048))
         for batch_idx, data in enumerate(trainloader_nogt):
+            if batch_idx % 1000==0:
+                print("Processing {} ...".format(batch_idx))
+
             pts, cls = data
             pts, cls = Variable(pts).float(), Variable(cls)
             pts, cls = pts.to(args.device), cls.to(args.device)
@@ -307,7 +313,17 @@ def main(args):
 
         all_shapes = np.concatenate((all_shapes_train_gt, all_shapes_train_nogt), axis=0)
 
-        np.save("global_shape_{}.npy".format(len(trainset_gt)), all_shapes)
+        shape_info = {"shapes": all_shapes, "labels": labels, "objects": objects}
+
+        import pickle
+        try:
+            o = open("global_shape_{}.pkl".format(len(trainset_gt)), "wb")
+            pickle.dump(shape_info,o,protocol=2)
+            o.close()
+        except FileNotFoundError as e:
+            print (e)
+
+        # np.save("global_shape_{}.npy".format(len(trainset_gt)), shape_info)
 
         # from MulticoreTSNE import MulticoreTSNE as TSNE
         # import matplotlib.pyplot as plt
