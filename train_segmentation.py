@@ -37,7 +37,8 @@ def parse_arguments():
 
     parser.add_argument("--batch_size",type=int,default=16, help="#data per batch")
     parser.add_argument("--lr",type=float, default=0.0001, help="lr for SS")
-    parser.add_argument("--lr_D",type=float, default=0.0001, help="lr for D")
+    parser.add_argument("--lr_D_point",type=float, default=1e-05, help="lr for D")
+    parser.add_argument("--lr_D_shape", type=float, default=1e-05, help="lr for D")
     parser.add_argument("--workers",type=int, default=0, help="#workers for dataloader")
     parser.add_argument("--loss",type=str, default="ce", help="Type of loss")
     parser.add_argument('--init_disc', type=str, default="xavier",
@@ -277,7 +278,8 @@ def main(args):
         D_params_point = (list(pointDisc.parameters()) + list(sharedDisc.parameters()))
         optimizer_D_shape = optim.SGD(
             D_params_shape,
-            lr=args.lr_D*0.2,
+            lr=args.lr_D_shape,
+            # lr=args.lr_D*0.2,
         )
         optimizer_D_shape.zero_grad()
         # optimizer_D_point = optim.Adam(
@@ -287,7 +289,7 @@ def main(args):
         # )
         optimizer_D_point = optim.SGD(
             D_params_point,
-            lr=args.lr_D,
+            lr=args.lr_D_point,
         )
         optimizer_D_point.zero_grad()
 

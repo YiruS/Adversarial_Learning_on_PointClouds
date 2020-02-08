@@ -207,9 +207,8 @@ class PointNetSeg(nn.Module):
         super(PointNetSeg, self).__init__()
         self.output_dim = NUM_SEG_CLASSES
 
-        # self.stn = STN3d()
-        # self.fstn = STNkd(k=128)
-
+        self.stn = STN3d()
+        self.fstn = STNkd(k=128)
         self.conv1 = torch.nn.Conv1d(3, 64, 1)
         self.conv2 = torch.nn.Conv1d(64, 128, 1)
         self.conv3 = torch.nn.Conv1d(128, 128, 1)

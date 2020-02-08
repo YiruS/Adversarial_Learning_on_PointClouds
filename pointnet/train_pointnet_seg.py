@@ -10,7 +10,7 @@ import numpy as np
 file_path = os.path.dirname(os.path.realpath(__file__))
 sys.path.append("%s/.." % file_path)
 
-from dataset.shapeNetData import ShapeNetDatasetGT
+from dataset.shapeNetData import ShapeNetDatasetGT, ShapeNetDataset_noGT
 from utils.utils import make_logger
 from utils.trainer import run_training_pointnet_seg, run_testing_seg
 from utils.model_utils import load_models
@@ -55,6 +55,8 @@ def parse_arguments():
                         help = 'run training')
     parser.add_argument('--test', action='store_true', default=False,
                         help='run testing')
+    parser.add_argument('--tsne', action='store_true', default=False,
+                        help='run testing')
     parser.add_argument('--tensorboard', action='store_true', default=False,
                         help='visulization with tensorboard')
     parser.add_argument('--adjust_lr', action='store_true', default=False,
@@ -97,7 +99,7 @@ def main(args):
     else:
         writer = None
 
-    if args.train  and args.test:
+    if args.train and args.test:
         print("===================================")
         print("====== Loading Training Data ======")
         print("===================================")
@@ -193,6 +195,132 @@ def main(args):
             writer=None,
             args=args,
         )
+
+    if args.tsne:
+        from utils.metric import batch_get_iou, object_names
+        from torch.autograd import Variable
+
+        args.batch_size = 1
+
+        labels = []
+        objects = []
+
+        if args.gt_sample_list != None:
+            sample_gt_list = np.load(args.gt_sample_list)
+        else:
+            sample_gt_list = None
+
+        trainset_gt = ShapeNetDatasetGT(
+            root_list=args.train_file,
+            sample_list=sample_gt_list,
+            num_classes=16,
+        )
+
+        trainset_nogt = ShapeNetDataset_noGT(
+            root_list=args.train_file,
+            sample_list=sample_gt_list,
+            num_classes=16,
+        )
+
+        trainloader_gt = torch.utils.data.DataLoader(
+            trainset_gt,
+            batch_size=args.batch_size,
+            shuffle=True,
+            num_workers=args.workers,
+            pin_memory=True,
+        )
+        trainloader_nogt = torch.utils.data.DataLoader(
+            trainset_nogt,
+            batch_size=args.batch_size,
+            shuffle=True,
+            num_workers=args.workers,
+            pin_memory=True,
+        )
+
+        # print("===================================")
+        # print("====== Loading Test Data ======")
+        # print("===================================")
+        # testset = ShapeNetDatasetGT(
+        #     root_list=args.test_file,
+        #     sample_list=None,
+        #     num_classes=16,
+        # )
+        # testloader = torch.utils.data.DataLoader(
+        #     testset,
+        #     batch_size=args.batch_size,
+        #     shuffle=False,
+        #     num_workers=args.workers,
+        #     pin_memory=True,
+        # )
+        #
+        # print("===================================")
+        # print("====== Loading Testing Data =======")
+        # print("===================================")
+        # testset = ShapeNetDatasetGT(
+        #     root_list=args.test_file,
+        #     sample_list=None,
+        #     num_classes=16,
+        # )
+        # testloader = torch.utils.data.DataLoader(
+        #     testset,
+        #     batch_size=args.batch_size,
+        #     shuffle=False,
+        #     num_workers=args.workers,
+        #     pin_memory=True,
+        # )
+
+        model.eval()
+
+        shape_ious = np.empty(len(object_names), dtype=np.object)
+        for i in range(shape_ious.shape[0]):
+            shape_ious[i] = []
+
+
+        all_shapes_train_gt = np.empty((len(trainset_gt), 2048))
+        for batch_idx, data in enumerate(trainloader_gt):
+            pts, cls, seg = data
+            pts, cls, seg = Variable(pts).float(), \
+                            Variable(cls), Variable(seg).type(torch.LongTensor)
+            pts, cls, seg = pts.to(args.device), cls.to(args.device), seg.long().to(args.device)
+
+            labels.append(1)
+            objects.append(int(cls.argmax(axis=2).squeeze().cpu().numpy()))
+
+            with torch.set_grad_enabled(False):
+                pred, global_shape = model(pts, cls)
+
+            all_shapes_train_gt[batch_idx,:] = global_shape.squeeze().detach().cpu().numpy()
+
+        all_shapes_train_nogt = np.empty((len(trainset_nogt), 2048))
+        for batch_idx, data in enumerate(trainloader_nogt):
+            pts, cls = data
+            pts, cls = Variable(pts).float(), Variable(cls)
+            pts, cls = pts.to(args.device), cls.to(args.device)
+
+            with torch.set_grad_enabled(False):
+                pred, global_shape = model(pts, cls)
+
+            all_shapes_train_nogt[batch_idx, :] = global_shape.squeeze().detach().cpu().numpy()
+
+            labels.append(0)
+            objects.append(int(cls.argmax(axis=2).squeeze().cpu().numpy()))
+
+        all_shapes = np.concatenate((all_shapes_train_gt, all_shapes_train_nogt), axis=0)
+
+        np.save("global_shape_{}.npy".format(len(trainset_gt)), all_shapes)
+
+        # from MulticoreTSNE import MulticoreTSNE as TSNE
+        # import matplotlib.pyplot as plt
+        #
+        # tsne = TSNE(n_jobs=8)
+        # embeddings = tsne.fit_transform(all_shapes)
+        # vis_x = embeddings[:, 0]
+        # vis_y = embeddings[:, 1]
+        # plt.scatter(vis_x, vis_y, c=objects, cmap=plt.cm.get_cmap("jet", 10), marker='.')
+        # plt.colorbar(ticks=range(10))
+        # plt.clim(-0.5, 9.5)
+        # plt.show()
+
 
 if __name__ == "__main__":
     args = parse_arguments()
