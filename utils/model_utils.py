@@ -6,6 +6,7 @@ from torch.nn import init
 
 from models.discriminator import DeepConvDiscNet, PointwiseDiscNet
 from models.discriminator import BaseDiscNet, ShapeDiscNet, PointDiscNet
+from models.discriminator import StackDiscNet
 from models.pointnet import PointNetCls, PointNetSeg
 
 def init_net(net, device, init_type, init_gain=1.0):
@@ -100,9 +101,8 @@ def load_models(mode, device, args):
     elif mode == "disc_seg":
         model = PointwiseDiscNet(input_pts=args.input_pts,input_dim=args.disc_indim)
         model = init_net(model, device, init_type=args.init_disc)
-
     elif mode == "disc_dual":
-        shared_disc = BaseDiscNet(input_pts=args.input_pts,input_dim=args.disc_indim, output_dim=256)
+        shared_disc = BaseDiscNet(input_pts=args.input_pts, input_dim=args.disc_indim, output_dim=256)
         shapeDisc = ShapeDiscNet(shared_output_dim=256, num_shapes=16)
         pointDisc = PointDiscNet(shared_output_dim=256, input_pts=args.input_pts)
         # model_point = SharedPointDiscNet(
@@ -119,6 +119,9 @@ def load_models(mode, device, args):
         shapeDisc = init_net(shapeDisc, device, init_type=args.init_disc)
         pointDisc = init_net(pointDisc, device, init_type=args.init_disc)
         return shared_disc, shapeDisc, pointDisc
+    elif mode == "disc_stack":
+        model = StackDiscNet(input_pts = args.input_pts, input_dim=args.disc_indim, num_shapes=16)
+        model = init_net(model, device, init_type=args.init_disc)
     else:
         raise ValueError("Invalid mode {}!".format(mode))
 

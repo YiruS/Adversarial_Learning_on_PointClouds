@@ -136,42 +136,40 @@ class PointDiscNet(nn.Module):
         x = x.view(-1, self.input_pts)
         return x
 
-#
-# class SharedPointDiscNet(nn.Module):
-#     def  __init__(self, input_pts, input_dim, shared_output_dim):
-#         super(SharedPointDiscNet, self).__init__()
-#         self.input_pts = input_pts
-#         self.BaseModule = BaseDiscNet(input_pts=input_pts, input_dim=input_dim, output_dim=shared_output_dim)
-#
-#         self.conv1 = torch.nn.Conv1d(shared_output_dim, 128, 1)  # 128
-#         self.leaky_relu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
-#
-#     def forward(self, x):
-#         x = self.BaseModule(x)
-#         x = self.leaky_relu(self.conv1(x))
-#         x = x.transpose(2, 1)  # BxNxC
-#         x = torch.max(x, 2, keepdim=True)[0]  # BxNx1
-#         x = x.view(-1, self.input_pts)
-#         return x
+class StackDiscNet(nn.Module):
+    def __init__(self, input_pts, input_dim, num_shapes):
+        super(StackDiscNet, self).__init__()
+        self.input_pts = input_pts
 
-# class SharedShapeDiscNet(nn.Module):
-#     def  __init__(self, input_pts, input_dim, shared_output_dim, num_shapes):
-#         super(SharedShapeDiscNet, self).__init__()
-#         self.input_pts = input_pts
-#         self.interm_dim = 512
-#         self.BaseModule = BaseDiscNet(input_pts=input_pts, input_dim=input_dim, output_dim=shared_output_dim)
-#
-#         self.conv1 = torch.nn.Conv1d(shared_output_dim, self.interm_dim, 1)
-#         self.fc1 = torch.nn.Linear(self.interm_dim, 64)
-#         self.fc2 = torch.nn.Linear(64, num_shapes)
-#
-#         self.leaky_relu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
-#
-#     def forward(self, x):
-#         x = self.BaseModule(x) # Bx512xN
-#         x = self.leaky_relu(self.conv1(x))
-#         x = torch.max(x, 2, keepdim=False)[0]  # BxCx1
-#         x = x.view(-1, self.output_dim)
-#         x = self.leaky_relu(self.fc1(x))
-#         x = self.fc2(x)
-#         return x
+        self.conv1 = torch.nn.Conv1d(input_dim, 64, 1) # 64
+        self.conv2 = torch.nn.Conv1d(64, 64, 1) # 64
+        self.conv3 = torch.nn.Conv1d(64, 64, 1) # 128
+        self.conv4 = torch.nn.Conv1d(64, 128, 1)  # 128
+
+        self.conv5 = torch.nn.Conv1d(1, num_shapes, 1)
+        # self.disc = torch.nn.Linear(num_shapes, 1)
+
+        self.leaky_relu = nn.LeakyReLU(negative_slope=0.2)
+
+    def custom_activation(self, x):
+        # logexpsum = backend.sum(backend.exp(x), axis=-1, keepdims=True)
+        x = x.transpose(2, 1) # BxNxS
+        out = torch.logsumexp(x, dim=2, keepdim=True)
+        res = out / (out + 1.0)
+        return res
+
+
+    def forward(self, x):
+        x = self.leaky_relu(self.conv1(x)) # Bx50xN
+        x = self.leaky_relu(self.conv2(x)) # Bx64xN
+        x = self.leaky_relu(self.conv3(x))
+        x = self.leaky_relu(self.conv4(x)) # BxCxN
+
+        # x = x.transpose(2,1) # BxNxC
+        x = torch.max(x, 1, keepdim=True)[0]  # Bx1xN
+        # x = x.view(-1, self.input_pts)
+        shape_logits = self.conv5(x) # BxSxN
+
+        disc_out = self.custom_activation(shape_logits) # BxNx1
+
+        return shape_logits, disc_out

@@ -30,6 +30,14 @@ def make_D_label(input, value, device, random=False):
         D_label = torch.FloatTensor(input.data.size()).fill_(value).to(device)
     return D_label
 
+def make_shape_label(input, npts):
+    device = input.device
+    cls = torch.argmax(input, dim=1, keepdim=True)
+    cls = cls.repeat(1,npts)
+    cls = cls.long().to(device)
+    return cls
+
+
 def lr_poly(base_lr, iter, max_iter, power):
     return base_lr * ((1 - float(iter) / max_iter) ** (power))
 

@@ -12,7 +12,7 @@ import numpy as np
 from dataset.shapeNetData import ShapeNetDatasetGT, ShapeNetDataset_noGT
 from utils.utils import make_logger
 from utils.trainer import run_training_seg, run_training_seg_semi, run_testing_seg
-from utils.trainer import run_training_seg_dual
+from utils.trainer import run_training_seg_dual, run_training_seg_stack
 from utils.model_utils import load_models
 from utils.image_pool import ImagePool
 
@@ -74,6 +74,8 @@ def parse_arguments():
                         help='run testing')
     parser.add_argument('--dual', action='store_true', default=False,
                         help='run training')
+    parser.add_argument('--train_stack', action='store_true', default=False,
+                        help='run training')
     parser.add_argument('--run_semi', action='store_true', default=False,
                         help='run semi training')
     parser.add_argument('--tensorboard', action='store_true', default=False,
@@ -100,14 +102,14 @@ def main(args):
     train_logger = make_logger("Train.log", args)
     test_logger = make_logger("Test.log", args)
 
-    if args.train:
+    if args.train or args.train_stack:
         model = load_models(
             mode="seg",
             device=device,
             args=args,
         )
         model_D = load_models(
-            mode="disc_seg",
+            mode="disc_stack",
             device=device,
             args=args,
         )
@@ -121,7 +123,7 @@ def main(args):
 
         optimizer_D = optim.Adam(
             model_D.parameters(),
-            lr=args.lr_D,
+            lr=args.lr_D_point,
             betas=(0.9, 0.999),
         )
         optimizer_D.zero_grad()
@@ -131,7 +133,7 @@ def main(args):
     else:
         writer = None
 
-    if args.train and args.test:
+    if (args.train or args.train_stack) and args.test:
         print("===================================")
         print("====== Loading Training Data ======")
         print("===================================")
@@ -192,7 +194,7 @@ def main(args):
         args.semi_start = int(args.semi_start_epoch *
                                args.total_data / args.batch_size)
 
-    if args.train and args.test:
+    if (args.train or args.train_stack) and args.test:
         model.train()
         model_D.train()
 
@@ -246,6 +248,30 @@ def main(args):
                 gan_loss=gan_loss,
                 seg_loss=seg_loss,
                 semi_loss=semi_loss,
+                optimizer=optimizer,
+                optimizer_D=optimizer_D,
+                history_pool_gt=history_pool_gt,
+                history_pool_nogt=history_pool_nogt,
+                writer=writer,
+                train_logger=train_logger,
+                test_logger=test_logger,
+                args=args,
+            )
+        elif args.train_stack:
+            gan_loss = torch.nn.BCELoss().to(device)
+            shape_criterion = torch.nn.CrossEntropyLoss().to(device)
+            run_training_seg_stack(
+                trainloader_gt=trainloader_gt,
+                trainloader_nogt=trainloader_nogt,
+                trainloader_gt_iter=trainloader_gt_iter,
+                targetloader_nogt_iter=targetloader_nogt_iter,
+                testloader=testloader,
+                testdataset=testset,
+                model=model,
+                model_D=model_D,
+                gan_loss=gan_loss,
+                seg_loss=seg_loss,
+                shape_criterion=shape_criterion,
                 optimizer=optimizer,
                 optimizer_D=optimizer_D,
                 history_pool_gt=history_pool_gt,
