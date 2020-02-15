@@ -202,6 +202,62 @@ class PointNetCls(nn.Module):
         x = self.fc3(x)
         return x, x_global.unsqueeze(2), trans_feat
 
+class PointNetSeg_regulization(nn.Module):
+    def __init__(self, NUM_SEG_CLASSES):
+        super(PointNetSeg_regulization, self).__init__()
+        self.output_dim = NUM_SEG_CLASSES
+
+        self.stn = STN3d()
+        self.fstn = STNkd(k=128)
+        self.conv1 = torch.nn.Conv1d(3, 64, 1)
+        self.conv2 = torch.nn.Conv1d(64, 128, 1)
+        self.conv3 = torch.nn.Conv1d(128, 128, 1)
+        self.conv4 = torch.nn.Conv1d(128, 128, 1)
+        self.conv5 = torch.nn.Conv1d(128, 512, 1)
+        self.conv6 = torch.nn.Conv1d(512, 2048, 1)
+
+        self.fc1 = torch.nn.Linear(3024, 256)
+        self.fc2 = torch.nn.Linear(256, 256)
+        self.fc3 = torch.nn.Linear(256, 128)
+        self.fc4 = torch.nn.Linear(128, self.output_dim)
+
+        # self.dropout = nn.Dropout(p=0.5)
+
+    def forward(self, x, cls):
+        x = x.transpose(1, 2)  # BxNxC -> BxCxN
+        n_pts = x.size()[2]
+        trans = self.stn(x)  # Bx3x3
+        x = x.transpose(2, 1)  # BxNxC
+        x = torch.bmm(x, trans)
+        x = x.transpose(2, 1)  # BxCxN
+        x1 = F.relu(self.conv1(x)) # Bx64xN
+        x2 = F.relu(self.conv2(x1)) # Bx128xN
+        x3 = F.relu(self.conv3(x2)) # Bx128xN
+
+        trans_feat = self.fstn(x3) # Bx128x128
+        x = torch.bmm(x3.transpose(2, 1), trans_feat)
+        x = x.transpose(2, 1)
+
+        x4 = F.relu(self.conv4(x)) #Bx128xN
+        x5 = F.relu(self.conv5(x4)) #Bx512xN
+        x6 = F.relu(self.conv6(x5)) #Bx2048xN
+
+        x_global = torch.max(x6, 2, keepdim=True)[0] #Bx2048x1
+        x_tile = x_global.repeat(1, 1, n_pts) # Bx2048xN
+        cls_tile = cls.transpose(2, 1).repeat(1, 1, n_pts) # BxC'xN
+        x_all = torch.cat((x1, x2, x3, x4, x5, x_tile, cls_tile), 1) #Bx3024xN
+
+        x = x_all.transpose(1, 2) # BxNxC
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = F.relu(self.fc3(x))
+        # x = self.dropout(F.relu(self.fc2(x)))
+        # x = self.dropout(F.relu(self.fc3(x)))
+        x = self.fc4(x)
+        x = x.transpose(1,2) # BxCxN
+
+        return x, x_global, trans_feat
+
 class PointNetSeg(nn.Module):
     def __init__(self, NUM_SEG_CLASSES):
         super(PointNetSeg, self).__init__()
@@ -290,9 +346,10 @@ def feature_transform_regularizer(trans):
     d = trans.size()[1]
     batchsize = trans.size()[0]
     I = torch.eye(d)[None, :, :]
-    if trans.is_cuda:
-        I = I.cuda()
-    loss = torch.mean(torch.norm(torch.bmm(trans, trans.transpose(2,1)) - I, dim=(1,2)))
+    I = I.cuda()
+    loss = torch.mean(
+        torch.norm(torch.bmm(trans, trans.transpose(2,1)) - I, dim=(1,2))
+    )
     return loss
 
 if __name__ == '__main__':

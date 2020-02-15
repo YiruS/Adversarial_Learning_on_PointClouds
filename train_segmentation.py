@@ -12,7 +12,8 @@ import numpy as np
 from dataset.shapeNetData import ShapeNetDatasetGT, ShapeNetDataset_noGT
 from utils.utils import make_logger
 from utils.trainer import run_training_seg, run_training_seg_semi, run_testing_seg
-from utils.trainer import run_training_seg_dual, run_training_seg_stack
+from utils.trainer import run_training_seg_dual
+from utils.trainer import run_training_seg_stack, run_training_seg_stack_regulization
 from utils.model_utils import load_models
 from utils.image_pool import ImagePool
 
@@ -57,6 +58,8 @@ def parse_arguments():
                         help='hyperparams for seg source')
     parser.add_argument('--lambda_adv', type=float, default=0.001,
                         help='hyperparams for adv of target')
+    parser.add_argument('--lambda_regu', type=float, default=0.001,
+                        help='hyperparams for feat regulization')
     parser.add_argument('--lambda_semi', type=float, default=1.0,
                         help='hyperparams for semi target')
     parser.add_argument('--lambda_disc_shape', type=float, default=1.0,
@@ -104,7 +107,7 @@ def main(args):
 
     if args.train or args.train_stack:
         model = load_models(
-            mode="seg",
+            mode="seg_regu",
             device=device,
             args=args,
         )
@@ -260,7 +263,8 @@ def main(args):
         elif args.train_stack:
             gan_loss = torch.nn.BCELoss().to(device)
             shape_criterion = torch.nn.CrossEntropyLoss().to(device)
-            run_training_seg_stack(
+            regu_loss = torch.nn.MSELoss().to(device)
+            run_training_seg_stack_regulization(
                 trainloader_gt=trainloader_gt,
                 trainloader_nogt=trainloader_nogt,
                 trainloader_gt_iter=trainloader_gt_iter,
@@ -271,6 +275,7 @@ def main(args):
                 model_D=model_D,
                 gan_loss=gan_loss,
                 seg_loss=seg_loss,
+                regu_loss=regu_loss,
                 shape_criterion=shape_criterion,
                 optimizer=optimizer,
                 optimizer_D=optimizer_D,
