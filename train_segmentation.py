@@ -81,6 +81,9 @@ def parse_arguments():
                         help='run training')
     parser.add_argument('--run_semi', action='store_true', default=False,
                         help='run semi training')
+    parser.add_argument('--tsne', action='store_true', default=False,
+                        help='run testing')
+
     parser.add_argument('--tensorboard', action='store_true', default=False,
                         help='visulization with tensorboard')
     parser.add_argument('--adjust_lr', action='store_true', default=False,
@@ -429,9 +432,6 @@ def main(args):
             args=args,
         )
 
-
-
-
     if args.test:
         print("===================================")
         print("====== Loading Testing Data =======")
@@ -460,6 +460,108 @@ def main(args):
             writer=None,
             args=args,
         )
+
+    if args.tsne:
+        from utils.metric import batch_get_iou, object_names
+        from torch.autograd import Variable
+
+        model = load_models(
+            mode="seg",
+            device=device,
+            args=args,
+        )
+
+        args.batch_size = 1
+
+        labels = []
+        objects = []
+
+        if args.gt_sample_list != None:
+            sample_gt_list = np.load(args.gt_sample_list)
+        else:
+            sample_gt_list = None
+
+        trainset_gt = ShapeNetDatasetGT(
+            root_list=args.train_file,
+            sample_list=sample_gt_list,
+            num_classes=16,
+        )
+
+        trainset_nogt = ShapeNetDataset_noGT(
+            root_list=args.train_file,
+            sample_list=sample_gt_list,
+            num_classes=16,
+        )
+
+        trainloader_gt = torch.utils.data.DataLoader(
+            trainset_gt,
+            batch_size=args.batch_size,
+            shuffle=True,
+            num_workers=args.workers,
+            pin_memory=True,
+        )
+        trainloader_nogt = torch.utils.data.DataLoader(
+            trainset_nogt,
+            batch_size=args.batch_size,
+            shuffle=True,
+            num_workers=args.workers,
+            pin_memory=True,
+        )
+
+        model.eval()
+
+        shape_ious = np.empty(len(object_names), dtype=np.object)
+        for i in range(shape_ious.shape[0]):
+            shape_ious[i] = []
+
+        all_shapes_train_gt = np.empty((len(trainset_gt), 2048))
+        for batch_idx, data in enumerate(trainloader_gt):
+            if batch_idx % 1000==0:
+                print("Processing {} ...".format(batch_idx))
+
+            pts, cls, seg = data
+            pts, cls, seg = Variable(pts).float(), \
+                            Variable(cls), Variable(seg).type(torch.LongTensor)
+            pts, cls, seg = pts.to(args.device), cls.to(args.device), seg.long().to(args.device)
+
+            labels.append(1)
+            objects.append(int(cls.argmax(axis=2).squeeze().cpu().numpy()))
+
+            with torch.set_grad_enabled(False):
+                pred, global_shape = model(pts, cls)
+
+            all_shapes_train_gt[batch_idx,:] = global_shape.squeeze().detach().cpu().numpy()
+
+        all_shapes_train_nogt = np.empty((len(trainset_nogt), 2048))
+        for batch_idx, data in enumerate(trainloader_nogt):
+            if batch_idx % 1000==0:
+                print("Processing {} ...".format(batch_idx))
+
+            pts, cls = data
+            pts, cls = Variable(pts).float(), Variable(cls)
+            pts, cls = pts.to(args.device), cls.to(args.device)
+
+            with torch.set_grad_enabled(False):
+                pred, global_shape = model(pts, cls)
+
+            all_shapes_train_nogt[batch_idx, :] = global_shape.squeeze().detach().cpu().numpy()
+
+            labels.append(0)
+            objects.append(int(cls.argmax(axis=2).squeeze().cpu().numpy()))
+
+        all_shapes = np.concatenate((all_shapes_train_gt, all_shapes_train_nogt), axis=0)
+
+        shape_info = {"shapes": all_shapes, "labels": labels, "objects": objects}
+
+        import pickle
+        try:
+            o = open("stack_global_shape_{}.pkl".format(len(trainset_gt)), "wb")
+            pickle.dump(shape_info,o,protocol=2)
+            o.close()
+        except FileNotFoundError as e:
+            print (e)
+
+
 
 if __name__ == "__main__":
     args = parse_arguments()
