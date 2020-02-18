@@ -14,6 +14,7 @@ from utils.utils import make_logger
 from utils.trainer import run_training_seg, run_training_seg_semi, run_testing_seg
 from utils.trainer import run_training_seg_dual
 from utils.trainer import run_training_seg_stack, run_training_seg_stack_regulization
+from utils.trainer import run_training_seg_stack_regulization_semi, run_training_seg_stack_semi
 from utils.model_utils import load_models
 from utils.image_pool import ImagePool
 
@@ -79,6 +80,8 @@ def parse_arguments():
                         help='run training')
     parser.add_argument('--train_stack', action='store_true', default=False,
                         help='run training')
+    parser.add_argument('--train_regu', action='store_true', default=False,
+                        help='add regulization')
     parser.add_argument('--run_semi', action='store_true', default=False,
                         help='run semi training')
     parser.add_argument('--tsne', action='store_true', default=False,
@@ -109,11 +112,19 @@ def main(args):
     test_logger = make_logger("Test.log", args)
 
     if args.train or args.train_stack:
-        model = load_models(
-            mode="seg_regu",
-            device=device,
-            args=args,
-        )
+        if args.train_regu:
+            model = load_models(
+                mode="seg_regu",
+                device=device,
+                args=args,
+            )
+        else:
+            model = load_models(
+                mode="seg",
+                device=device,
+                args=args,
+            )
+
         model_D = load_models(
             mode="disc_stack",
             device=device,
@@ -267,28 +278,101 @@ def main(args):
             gan_loss = torch.nn.BCELoss().to(device)
             shape_criterion = torch.nn.CrossEntropyLoss().to(device)
             regu_loss = torch.nn.MSELoss().to(device)
-            run_training_seg_stack_regulization(
-                trainloader_gt=trainloader_gt,
-                trainloader_nogt=trainloader_nogt,
-                trainloader_gt_iter=trainloader_gt_iter,
-                targetloader_nogt_iter=targetloader_nogt_iter,
-                testloader=testloader,
-                testdataset=testset,
-                model=model,
-                model_D=model_D,
-                gan_loss=gan_loss,
-                seg_loss=seg_loss,
-                regu_loss=regu_loss,
-                shape_criterion=shape_criterion,
-                optimizer=optimizer,
-                optimizer_D=optimizer_D,
-                history_pool_gt=history_pool_gt,
-                history_pool_nogt=history_pool_nogt,
-                writer=writer,
-                train_logger=train_logger,
-                test_logger=test_logger,
-                args=args,
-            )
+
+            if args.semi_start_epoch == 0:
+                if args.train_regu:
+                    run_training_seg_stack_regulization(
+                        trainloader_gt=trainloader_gt,
+                        trainloader_nogt=trainloader_nogt,
+                        trainloader_gt_iter=trainloader_gt_iter,
+                        targetloader_nogt_iter=targetloader_nogt_iter,
+                        testloader=testloader,
+                        testdataset=testset,
+                        model=model,
+                        model_D=model_D,
+                        gan_loss=gan_loss,
+                        seg_loss=seg_loss,
+                        regu_loss=regu_loss,
+                        shape_criterion=shape_criterion,
+                        optimizer=optimizer,
+                        optimizer_D=optimizer_D,
+                        history_pool_gt=history_pool_gt,
+                        history_pool_nogt=history_pool_nogt,
+                        writer=writer,
+                        train_logger=train_logger,
+                        test_logger=test_logger,
+                        args=args,
+                    )
+                else:
+                    run_training_seg_stack(
+                        trainloader_gt=trainloader_gt,
+                        trainloader_nogt=trainloader_nogt,
+                        trainloader_gt_iter=trainloader_gt_iter,
+                        targetloader_nogt_iter=targetloader_nogt_iter,
+                        testloader=testloader,
+                        testdataset=testset,
+                        model=model,
+                        model_D=model_D,
+                        gan_loss=gan_loss,
+                        seg_loss=seg_loss,
+                        shape_criterion=shape_criterion,
+                        optimizer=optimizer,
+                        optimizer_D=optimizer_D,
+                        history_pool_gt=history_pool_gt,
+                        history_pool_nogt=history_pool_nogt,
+                        writer=writer,
+                        train_logger=train_logger,
+                        test_logger=test_logger,
+                        args=args,
+                    )
+            else:
+                if args.train_regu:
+                    run_training_seg_stack_regulization_semi(
+                        trainloader_gt=trainloader_gt,
+                        trainloader_nogt=trainloader_nogt,
+                        trainloader_gt_iter=trainloader_gt_iter,
+                        targetloader_nogt_iter=targetloader_nogt_iter,
+                        testloader=testloader,
+                        testdataset=testset,
+                        model=model,
+                        model_D=model_D,
+                        gan_loss=gan_loss,
+                        seg_loss=seg_loss,
+                        regu_loss=regu_loss,
+                        semi_loss=semi_loss,
+                        shape_criterion=shape_criterion,
+                        optimizer=optimizer,
+                        optimizer_D=optimizer_D,
+                        history_pool_gt=history_pool_gt,
+                        history_pool_nogt=history_pool_nogt,
+                        writer=writer,
+                        train_logger=train_logger,
+                        test_logger=test_logger,
+                        args=args,
+                    )
+                else:
+                    run_training_seg_stack_semi(
+                        trainloader_gt=trainloader_gt,
+                        trainloader_nogt=trainloader_nogt,
+                        trainloader_gt_iter=trainloader_gt_iter,
+                        targetloader_nogt_iter=targetloader_nogt_iter,
+                        testloader=testloader,
+                        testdataset=testset,
+                        model=model,
+                        model_D=model_D,
+                        gan_loss=gan_loss,
+                        seg_loss=seg_loss,
+                        semi_loss=semi_loss,
+                        shape_criterion=shape_criterion,
+                        optimizer=optimizer,
+                        optimizer_D=optimizer_D,
+                        history_pool_gt=history_pool_gt,
+                        history_pool_nogt=history_pool_nogt,
+                        writer=writer,
+                        train_logger=train_logger,
+                        test_logger=test_logger,
+                        args=args,
+                    )
 
     if args.dual:
         model = load_models(

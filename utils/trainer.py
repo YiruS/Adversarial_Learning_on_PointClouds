@@ -1427,6 +1427,479 @@ def run_training_seg_stack_regulization(
     if args.tensorboard:
         writer.close()
 
+
+def run_training_seg_stack_semi(
+    trainloader_gt,
+    trainloader_nogt,
+    trainloader_gt_iter,
+    targetloader_nogt_iter,
+    testloader,
+    testdataset,
+    model,
+    model_D,
+    gan_loss,
+    seg_loss,
+    semi_loss,
+    shape_criterion,
+    optimizer,
+    optimizer_D,
+    history_pool_gt,
+    history_pool_nogt,
+    train_logger,
+    test_logger,
+    writer,
+    args,
+):
+    gt_label = 1
+    nogt_label = 0
+    max_seg_accu, max_test_cat_iou, max_test_all_iou = float("-inf"), float("-inf"), float("-inf")
+
+    for i_iter in range(args.total_iterations):
+        loss_seg_value = 0.
+        loss_adv_value = 0.
+        loss_D_value = 0.
+        loss_D_shape_value = 0.
+        loss_semi_value = 0.
+
+        model.train()
+        model_D.train()
+
+        optimizer.zero_grad()
+        optimizer_D.zero_grad()
+
+        ## train G ##
+        for param in model_D.parameters():
+            param.requires_grad = False
+
+        ## train with points w/ GT ##
+        try:
+            _, batch = next(trainloader_gt_iter)
+        except StopIteration:
+            trainloader_gt_iter = enumerate(trainloader_gt)
+            _, batch = next(trainloader_gt_iter)
+
+        pts, cls, seg = batch
+        pts, cls, seg = pts.to(args.device), cls.to(args.device), seg.long().to(args.device)
+
+        pred, global_gt = model(pts, cls)
+        l_seg = seg_loss(pred, seg)
+        loss_seg_value += l_seg.item()
+        pred_gt_softmax = F.softmax(pred, dim=1)
+
+        ## train with target ##
+        try:
+            _, batch = next(targetloader_nogt_iter)
+        except StopIteration:
+            targetloader_nogt_iter = enumerate(trainloader_nogt)
+            _, batch = next(targetloader_nogt_iter)
+
+        pts_nogt, cls_nogt = batch
+        pts_nogt, cls_nogt = pts_nogt.to(args.device), cls_nogt.to(args.device)
+
+        pred_nogt, global_nogt = model(pts_nogt, cls_nogt)
+        pred_nogt_softmax = F.log_softmax(pred_nogt, dim=1)
+
+        _, D_out_nogt = model_D(pred_nogt_softmax)  #Bx1xC
+        generated_label = make_D_label(
+            input=D_out_nogt,
+            value=gt_label,
+            device=args.device,
+            random=False,
+        )
+
+        loss_adv = gan_loss(D_out_nogt, generated_label)
+        loss_adv_value += loss_adv.item()
+
+        # loss = args.lambda_seg * l_seg + args.lambda_adv * loss_adv
+        # loss.backward()
+
+        ## semi loss for unlabeled pts ##
+        if (args.semi_start > 0) and (i_iter > args.semi_start):
+            semi_ignore_mask = (D_out_nogt <= args.semi_TH)
+            semi_ignore_mask = semi_ignore_mask.squeeze(2)
+            semi_gt = torch.argmax(pred_nogt, dim=1)
+            semi_gt[semi_ignore_mask] = 255
+
+            semi_ratio = 1.0 - float(semi_ignore_mask.sum().item()) / float(np.prod(semi_ignore_mask.shape))
+            if semi_ratio == 0.0:
+                loss_semi_value += 0
+                l_semi = None
+            else:
+                # semi_gt = torch.LongTensor(semi_gt).to(args.device)
+                l_semi = semi_loss(pred_nogt, semi_gt)
+                loss_semi_value += l_semi.item()
+        else:
+            l_semi = None
+
+        if (l_semi is not None):
+            loss_SEG_Net = args.lambda_seg * l_seg + \
+                           args.lambda_adv * loss_adv + \
+                           args.lambda_semi * l_semi
+        else:
+            loss_SEG_Net = args.lambda_seg * l_seg + \
+                           args.lambda_adv * loss_adv
+
+        loss_SEG_Net.backward()
+
+        ## train D ##
+        for param in model_D.parameters():
+            param.requires_grad = True
+
+        ## train w/ GT ##
+        pred_gt_softmax = pred_gt_softmax.detach()
+        S_out_gt, D_out_gt = model_D(pred_gt_softmax)  # BxSxN, BxNx1
+        npts = S_out_gt.shape[2]
+        cls = make_shape_label(input=cls.squeeze(1), npts=npts)
+        loss_D_shape = shape_criterion(S_out_gt, cls)
+
+        loss_D_shape_value += loss_D_shape.item()
+        loss_D_shape = args.lambda_disc_shape * loss_D_shape
+        loss_D_shape.backward()
+
+        pool_gt = history_pool_gt.query(pred_gt_softmax)
+        _, D_out_gt = model_D(pool_gt)
+        generated_label = make_D_label(
+            input=D_out_gt,
+            value=gt_label,
+            device=args.device,
+            random=True,
+        )
+        loss_D_gt = 0.5*gan_loss(D_out_gt, generated_label)
+        loss_D_gt.backward()
+        loss_D_value += loss_D_gt.item()
+
+        ## train wo GT ##
+        pred_nogt_softmax = pred_nogt_softmax.detach()
+        pool_nogt = history_pool_nogt.query(pred_nogt_softmax)
+        _, D_out_nogt = model_D(pool_nogt)
+        generated_label = make_D_label(
+            input=D_out_nogt,
+            value=nogt_label,
+            device=args.device,
+            random=True,
+        )
+        loss_D_nogt = 0.5*gan_loss(D_out_nogt, generated_label)
+        loss_D_nogt.backward()
+        loss_D_value += loss_D_nogt.item()
+
+        optimizer.step()
+        optimizer_D.step()
+
+        train_logger.info('iter = {0:8d}/{1:8d} '
+              'loss_seg = {2:.3f} '
+              'loss_adv = {3:.3f} '
+              'loss_semi = {4.:.3f} '
+              'loss_D = {5:.3f} '
+              'loss_D_shape = {6:.3f} '.format(
+                i_iter, args.total_iterations,
+                loss_seg_value,
+                loss_adv_value,
+                loss_semi_value,
+                loss_D_value,
+                loss_D_shape_value,
+            )
+        )
+
+        if args.tensorboard:
+            writer.add_scalar('Loss/train_seg', loss_seg_value, i_iter)
+            writer.add_scalar('Loss/train_adv', loss_adv_value, i_iter)
+            writer.add_scalar('Loss/train_D', loss_D_value, i_iter)
+            writer.add_scalar('Loss/train_D_shape', loss_D_shape_value, i_iter)
+            writer.add_scalar('Loss/train_semi', loss_semi_value, i_iter)
+
+        if i_iter % args.iter_test_epoch == 0:
+            curr_epoch = i_iter // args.iter_test_epoch
+            torch.save(model.state_dict(), os.path.join(args.exp_dir,
+                                                       "model_train_epoch_{}.pth").format(curr_epoch))
+            torch.save(model_D.state_dict(), os.path.join(args.exp_dir,
+                                                         "modelD_train_epoch_{}.pth").format(curr_epoch))
+
+            curr_accu, curr_loss, curr_cat_iou, curr_all_iou = run_testing_seg(
+                dataloader=testloader,
+                dataset=testdataset,
+                model=model,
+                criterion=seg_loss,
+                logger=test_logger,
+                test_iter=i_iter,
+                writer=writer,
+                args=args,
+            )
+
+            if max_seg_accu < curr_accu:
+                max_seg_accu = curr_accu
+                max_train_epoch = i_iter // args.iter_test_epoch
+                torch.save(model.state_dict(), os.path.join(args.exp_dir, "model_train_best.pth"))
+                torch.save(model_D.state_dict(), os.path.join(args.exp_dir, "modelD_train_best.pth"))
+
+            if max_test_cat_iou < curr_cat_iou:
+                max_test_cat_iou = curr_cat_iou
+                max_train_cat_epoch = i_iter // args.iter_test_epoch
+                torch.save(model.state_dict(), os.path.join(args.exp_dir, "model_train_best_cat_iou.pth"))
+                torch.save(model_D.state_dict(), os.path.join(args.exp_dir, "modelD_train_best_cat_iou.pth"))
+
+            if max_test_all_iou < curr_all_iou:
+                max_test_all_iou = curr_all_iou
+                max_train_all_epoch = i_iter // args.iter_test_epoch
+                torch.save(model.state_dict(), os.path.join(args.exp_dir, "model_train_best_all_iou.pth"))
+                torch.save(model_D.state_dict(), os.path.join(args.exp_dir, "modelD_train_best_all_iou.pth"))
+
+    train_logger.info("=========================")
+    train_logger.info("Max accuracy: {:.4f}, at epoch: {}".format(max_seg_accu, max_train_epoch))
+    train_logger.info("Max cat mIoU: {:.4f}, at epoch: {}".format(max_test_cat_iou, max_train_cat_epoch))
+    train_logger.info("Max all mIoU: {:.4f}, at epoch: {}".format(max_test_all_iou, max_train_all_epoch))
+
+    if args.tensorboard:
+        writer.close()
+
+def run_training_seg_stack_regulization_semi(
+    trainloader_gt,
+    trainloader_nogt,
+    trainloader_gt_iter,
+    targetloader_nogt_iter,
+    testloader,
+    testdataset,
+    model,
+    model_D,
+    gan_loss,
+    seg_loss,
+    regu_loss,
+    semi_loss,
+    shape_criterion,
+    optimizer,
+    optimizer_D,
+    history_pool_gt,
+    history_pool_nogt,
+    train_logger,
+    test_logger,
+    writer,
+    args,
+):
+    gt_label = 1
+    nogt_label = 0
+    max_seg_accu, max_test_cat_iou, max_test_all_iou = float("-inf"), float("-inf"), float("-inf")
+
+    for i_iter in range(args.total_iterations):
+        loss_seg_value = 0.
+        loss_adv_value = 0.
+        loss_D_value = 0.
+        loss_D_shape_value = 0.
+        loss_regu_value = 0.
+        loss_semi_value = 0.
+
+        model.train()
+        model_D.train()
+
+        optimizer.zero_grad()
+        optimizer_D.zero_grad()
+
+        ## train G ##
+        for param in model_D.parameters():
+            param.requires_grad = False
+
+        ## train with points w/ GT ##
+        try:
+            _, batch = next(trainloader_gt_iter)
+        except StopIteration:
+            trainloader_gt_iter = enumerate(trainloader_gt)
+            _, batch = next(trainloader_gt_iter)
+
+        pts, cls, seg = batch
+        pts, cls, seg = pts.to(args.device), cls.to(args.device), seg.long().to(args.device)
+
+        pred, global_gt, high_feat = model(pts, cls)
+        l_seg = seg_loss(pred, seg)
+        loss_seg_value += l_seg.item()
+        pred_gt_softmax = F.softmax(pred, dim=1)
+
+        d = high_feat.size()[1]
+        batchsize = high_feat.size()[0]
+        I = torch.eye(d).to(args.device)
+        I = I.unsqueeze(0).repeat(batchsize,1,1)
+        bmm_feat = torch.bmm(high_feat, high_feat.transpose(2, 1))
+        l_regu_gt = regu_loss(bmm_feat, I)
+        loss_regu_value += l_regu_gt.item()
+
+        ## train with target ##
+        try:
+            _, batch = next(targetloader_nogt_iter)
+        except StopIteration:
+            targetloader_nogt_iter = enumerate(trainloader_nogt)
+            _, batch = next(targetloader_nogt_iter)
+
+        pts_nogt, cls_nogt = batch
+        pts_nogt, cls_nogt = pts_nogt.to(args.device), cls_nogt.to(args.device)
+
+        pred_nogt, global_nogt, high_feat_nogt = model(pts_nogt, cls_nogt)
+        pred_nogt_softmax = F.log_softmax(pred_nogt, dim=1)
+
+        d = high_feat_nogt.size()[1]
+        batchsize = high_feat_nogt.size()[0]
+        I = torch.eye(d).to(args.device)
+        I = I.unsqueeze(0).repeat(batchsize, 1, 1)
+        bmm_feat = torch.bmm(high_feat_nogt, high_feat_nogt.transpose(2, 1))
+        l_regu_nogt = regu_loss(bmm_feat, I)
+        loss_regu_value += l_regu_nogt.item()
+
+        _, D_out_nogt = model_D(pred_nogt_softmax)  #Bx1xC
+        generated_label = make_D_label(
+            input=D_out_nogt,
+            value=gt_label,
+            device=args.device,
+            random=False,
+        )
+
+        loss_adv = gan_loss(D_out_nogt, generated_label)
+        loss_adv_value += loss_adv.item()
+
+        # loss = args.lambda_seg * l_seg + \
+        #        args.lambda_adv * loss_adv + \
+        #        args.lambda_regu * l_regu_gt + args.lambda_regu * l_regu_nogt
+        # loss.backward()
+
+        ## semi loss for unlabeled pts ##
+        if (args.semi_start > 0) and (i_iter > args.semi_start):
+            semi_ignore_mask = (D_out_nogt <= args.semi_TH)
+            semi_ignore_mask = semi_ignore_mask.squeeze(2)
+            semi_gt = torch.argmax(pred_nogt, dim=1)
+            semi_gt[semi_ignore_mask] = 255
+
+            semi_ratio = 1.0 - float(semi_ignore_mask.sum().item()) / float(np.prod(semi_ignore_mask.shape))
+            if semi_ratio == 0.0:
+                loss_semi_value += 0
+                l_semi = None
+            else:
+                # semi_gt = torch.LongTensor(semi_gt).to(args.device)
+                l_semi = semi_loss(pred_nogt, semi_gt)
+                loss_semi_value += l_semi.item()
+        else:
+            l_semi = None
+
+        if (l_semi is not None):
+            loss_SEG_Net = args.lambda_seg * l_seg + \
+                           args.lambda_adv * loss_adv + \
+                           args.lambda_regu * l_regu_gt + \
+                           args.lambda_regu * l_regu_nogt + \
+                           args.lambda_semi * l_semi
+        else:
+            loss_SEG_Net = args.lambda_seg * l_seg + \
+                           args.lambda_adv * loss_adv + \
+                           args.lambda_regu * l_regu_gt + \
+                           args.lambda_regu * l_regu_nogt
+
+        loss_SEG_Net.backward()
+
+        ## train D ##
+        for param in model_D.parameters():
+            param.requires_grad = True
+
+        ## train w/ GT ##
+        pred_gt_softmax = pred_gt_softmax.detach()
+        S_out_gt, D_out_gt = model_D(pred_gt_softmax)  # BxSxN, BxNx1
+        npts = S_out_gt.shape[2]
+        cls = make_shape_label(input=cls.squeeze(1), npts=npts)
+        loss_D_shape = shape_criterion(S_out_gt, cls)
+
+        loss_D_shape_value += loss_D_shape.item()
+        loss_D_shape = args.lambda_disc_shape * loss_D_shape
+        loss_D_shape.backward()
+
+        pool_gt = history_pool_gt.query(pred_gt_softmax)
+        _, D_out_gt = model_D(pool_gt)
+        generated_label = make_D_label(
+            input=D_out_gt,
+            value=gt_label,
+            device=args.device,
+            random=True,
+        )
+        loss_D_gt = 0.5*gan_loss(D_out_gt, generated_label)
+        loss_D_gt.backward()
+        loss_D_value += loss_D_gt.item()
+
+        ## train wo GT ##
+        pred_nogt_softmax = pred_nogt_softmax.detach()
+        pool_nogt = history_pool_nogt.query(pred_nogt_softmax)
+        _, D_out_nogt = model_D(pool_nogt)
+        generated_label = make_D_label(
+            input=D_out_nogt,
+            value=nogt_label,
+            device=args.device,
+            random=True,
+        )
+        loss_D_nogt = 0.5*gan_loss(D_out_nogt, generated_label)
+        loss_D_nogt.backward()
+        loss_D_value += loss_D_nogt.item()
+
+        optimizer.step()
+        optimizer_D.step()
+
+        train_logger.info('iter = {0:8d}/{1:8d} '
+              'loss_seg = {2:.3f} '
+              'loss_adv = {3:.3f} '
+              'loss_regu = {4:.3f} '
+              'loss_semi = {5:.3f} '
+              'loss_D = {6:.3f} '
+              'loss_D_shape = {7:.3f} '.format(
+                i_iter, args.total_iterations,
+                loss_seg_value,
+                loss_adv_value,
+                loss_regu_value,
+                loss_semi_value,
+                loss_D_value,
+                loss_D_shape_value,
+            )
+        )
+
+        if args.tensorboard:
+            writer.add_scalar('Loss/train_seg', loss_seg_value, i_iter)
+            writer.add_scalar('Loss/train_adv', loss_adv_value, i_iter)
+            writer.add_scalar('Loss/train_D', loss_D_value, i_iter)
+            writer.add_scalar('Loss/train_D_shape', loss_D_shape_value, i_iter)
+            writer.add_scalar('Loss/train_semi', loss_semi_value, i_iter)
+
+        if i_iter % args.iter_test_epoch == 0:
+            curr_epoch = i_iter // args.iter_test_epoch
+            torch.save(model.state_dict(), os.path.join(args.exp_dir,
+                                                       "model_train_epoch_{}.pth").format(curr_epoch))
+            torch.save(model_D.state_dict(), os.path.join(args.exp_dir,
+                                                         "modelD_train_epoch_{}.pth").format(curr_epoch))
+
+            curr_accu, curr_loss, curr_cat_iou, curr_all_iou = run_testing_seg_regulization(
+                dataloader=testloader,
+                dataset=testdataset,
+                model=model,
+                criterion=seg_loss,
+                logger=test_logger,
+                test_iter=i_iter,
+                writer=writer,
+                args=args,
+            )
+
+            if max_seg_accu < curr_accu:
+                max_seg_accu = curr_accu
+                max_train_epoch = i_iter // args.iter_test_epoch
+                torch.save(model.state_dict(), os.path.join(args.exp_dir, "model_train_best.pth"))
+                torch.save(model_D.state_dict(), os.path.join(args.exp_dir, "modelD_train_best.pth"))
+
+            if max_test_cat_iou < curr_cat_iou:
+                max_test_cat_iou = curr_cat_iou
+                max_train_cat_epoch = i_iter // args.iter_test_epoch
+                torch.save(model.state_dict(), os.path.join(args.exp_dir, "model_train_best_cat_iou.pth"))
+                torch.save(model_D.state_dict(), os.path.join(args.exp_dir, "modelD_train_best_cat_iou.pth"))
+
+            if max_test_all_iou < curr_all_iou:
+                max_test_all_iou = curr_all_iou
+                max_train_all_epoch = i_iter // args.iter_test_epoch
+                torch.save(model.state_dict(), os.path.join(args.exp_dir, "model_train_best_all_iou.pth"))
+                torch.save(model_D.state_dict(), os.path.join(args.exp_dir, "modelD_train_best_all_iou.pth"))
+
+    train_logger.info("=========================")
+    train_logger.info("Max accuracy: {:.4f}, at epoch: {}".format(max_seg_accu, max_train_epoch))
+    train_logger.info("Max cat mIoU: {:.4f}, at epoch: {}".format(max_test_cat_iou, max_train_cat_epoch))
+    train_logger.info("Max all mIoU: {:.4f}, at epoch: {}".format(max_test_all_iou, max_train_all_epoch))
+
+    if args.tensorboard:
+        writer.close()
+
 def run_training_seg_semi(
     trainloader_gt,
     trainloader_nogt,
